@@ -29,7 +29,7 @@ class AppConfig:
     admin_token_ttl_hours: int = 12
     pin_max_attempts: int = 5
     pin_lockout_seconds: int = 900
-    rate_limit_requests: int = 60
+    rate_limit_requests: int = 180
     media_rate_limit_requests: int = 600
     rate_limit_window_seconds: int = 60
     rate_limit_max_keys: int = 10_000

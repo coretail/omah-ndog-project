@@ -407,3 +407,67 @@ class PhotoItemResponse(BaseModel):
 class SessionPhotoListResponse(BaseModel):
     subfolder: str
     photos: list[PhotoItemResponse]
+
+
+MAX_PRINT_COPIES = 20
+
+PrintJobStatusLiteral = Literal["queued", "printing", "printed", "failed", "cancelled"]
+PrinterStatusLiteral = Literal["ready", "offline", "paper_out", "error", "busy", "unknown"]
+
+
+class SubmitPrintJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    frame_id: int = Field(gt=0)
+    copies: int = Field(ge=1, le=MAX_PRINT_COPIES)
+    selected_photos: list[SelectedPhotoSlotSchema] = Field(
+        min_length=1,
+        max_length=MAX_SLOTS_PER_FRAME,
+    )
+
+    @field_validator("selected_photos")
+    @classmethod
+    def _unique_slot_ids(
+        cls, value: list[SelectedPhotoSlotSchema]
+    ) -> list[SelectedPhotoSlotSchema]:
+        seen: set[str] = set()
+        for item in value:
+            if item.slotId in seen:
+                raise ValueError(f"Duplicate slotId in selection: {item.slotId}")
+            seen.add(item.slotId)
+        return value
+
+
+class PrintJobCustomerResponse(BaseModel):
+    id: int
+    status: PrintJobStatusLiteral
+    copies: int
+    total_price: int
+    error_message: str
+
+
+class AdminPrintJobResponse(BaseModel):
+    id: int
+    session_id: int
+    customer_name: str
+    frame_id: int
+    frame_name: str
+    category_name: str
+    unit_price: int
+    copies: int
+    total_price: int
+    status: PrintJobStatusLiteral
+    error_message: str
+    has_output: bool
+    preview_url: str | None
+    download_url: str | None
+    created_at: str
+    updated_at: str
+
+
+class PrinterInfoResponse(BaseModel):
+    name: str
+    is_default: bool
+    status: PrinterStatusLiteral
+    status_message: str
+    jobs_count: int

@@ -357,6 +357,48 @@ export interface PrintJobStatus {
   error_message: string;
 }
 
+export type PrinterStatus = "ready" | "offline" | "paper_out" | "error" | "busy" | "unknown";
+
+export interface PrinterInfo {
+  name: string;
+  is_default: boolean;
+  status: PrinterStatus;
+  status_message: string;
+  jobs_count: number;
+}
+
+export interface AdminPrintJob {
+  id: number;
+  session_id: number;
+  customer_name: string;
+  frame_id: number;
+  frame_name: string;
+  category_name: string;
+  unit_price: number;
+  copies: number;
+  total_price: number;
+  status: PrintJobStatus["status"];
+  error_message: string;
+  has_output: boolean;
+  preview_url: string | null;
+  download_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchAuthenticatedBlob(url: string): Promise<Blob> {
+  const headers = new Headers();
+  const token = getStoredAdminToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new ApiError(response.status, `Gagal memuat berkas (${response.status})`);
+  }
+  return await response.blob();
+}
+
 export const sessionsApi = {
   createSession(payload: CustomerSessionCreate): Promise<CustomerSession> {
     return requestJson<CustomerSession>("/api/sessions", {
@@ -388,33 +430,47 @@ export const photosApi = {
 };
 
 export const printsApi = {
-  async submitJob(
-    token: string,
-    payload: SubmitPrintJobRequest
-  ): Promise<PrintJobStatus | null> {
-    try {
-      return await requestJson<PrintJobStatus>(`/api/prints/${encodeURIComponent(token)}`, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        return null;
-      }
-      throw err;
-    }
+  submitJob(token: string, payload: SubmitPrintJobRequest): Promise<PrintJobStatus> {
+    return requestJson<PrintJobStatus>(`/api/prints/${encodeURIComponent(token)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
-  async getJobStatus(token: string, jobId: number): Promise<PrintJobStatus | null> {
-    try {
-      return await requestJson<PrintJobStatus>(
-        `/api/prints/${encodeURIComponent(token)}/${jobId}`
-      );
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        return null;
-      }
-      throw err;
-    }
+  getJobStatus(token: string, jobId: number): Promise<PrintJobStatus> {
+    return requestJson<PrintJobStatus>(`/api/prints/${encodeURIComponent(token)}/${jobId}`);
+  },
+
+  listPrinters(): Promise<PrinterInfo[]> {
+    return requestJson<PrinterInfo[]>("/api/prints/printers", {}, true);
+  },
+
+  listQueue(statusFilter?: PrintJobStatus["status"]): Promise<AdminPrintJob[]> {
+    const query = statusFilter ? `?status_filter=${encodeURIComponent(statusFilter)}` : "";
+    return requestJson<AdminPrintJob[]>(`/api/prints/queue${query}`, {}, true);
+  },
+
+  triggerPrint(jobId: number): Promise<AdminPrintJob> {
+    return requestJson<AdminPrintJob>(
+      `/api/prints/queue/${jobId}/print`,
+      { method: "POST" },
+      true
+    );
+  },
+
+  retryJob(jobId: number): Promise<AdminPrintJob> {
+    return requestJson<AdminPrintJob>(
+      `/api/prints/queue/${jobId}/retry`,
+      { method: "POST" },
+      true
+    );
+  },
+
+  cancelJob(jobId: number): Promise<AdminPrintJob> {
+    return requestJson<AdminPrintJob>(
+      `/api/prints/queue/${jobId}/cancel`,
+      { method: "POST" },
+      true
+    );
   },
 };

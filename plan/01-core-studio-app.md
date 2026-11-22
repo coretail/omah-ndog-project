@@ -176,19 +176,19 @@ F:\omah-ndog-project\
 ## Fase 5: Compositing 300 DPI, Printing, & Print Queue
 - Tujuan: Mengimplementasikan rendering compositing 300 DPI non-blocking, abstraksi printer Windows (`PrinterBackend`) yang dapat di-mock, worker antrean cetak dengan penanganan error/retry/cancel, serta panel Print Queue di Admin Dashboard.
 - Tugas:
-  - [ ] Implementasi `backend/services/compositor.py`:
+  - [x] Implementasi `backend/services/compositor.py`:
     - Hitung dimensi kanvas 300 DPI dari `width_mm`, `height_mm`, dan `orientation` (`portrait`/`landscape`), serta dukungan `safe_margin_mm`.
     - Terapkan `ImageOps.exif_transpose`, center-cover crop + offset/zoom user ke tiap slot persegi (`xPct, yPct, wPct, hPct`), lalu alpha-composite overlay frame PNG di atasnya.
     - Simpan hasil akhir beresolusi 300 DPI ke `data/outputs/<session_id>/<job_id>.jpg` (atau PNG/JPEG high quality dengan metadata `dpi=(300, 300)`).
-  - [ ] Implementasi `backend/services/printer.py`:
+  - [x] Implementasi `backend/services/printer.py`:
     - Definisikan interface `PrinterBackend` (`list_printers`, `get_printer_status`, `print_image`).
     - Implementasi `WindowsSpoolerPrinter` menggunakan `pywin32` (`win32print` + `PIL.ImageWin`) dengan pengecekan status printer (deteksi offline, paper out, error spooler) dan pengaturan orientasi/jumlah copy.
     - Implementasi `MockPrinterBackend` untuk unit test & pengembangan tanpa printer fisik (bisa mensimulasikan sukses, printer offline, dan kertas habis).
-  - [ ] Implementasi `backend/services/print_worker.py`: worker threadpool / antrean latar belakang agar compositing dan proses kirim ke printer tidak pernah memblokir event loop FastAPI; otomatis meneruskan ke printer bila `auto_print_enabled=true` atau menahan di status `queued` untuk mode Manual Queue.
-  - [ ] Implementasi `backend/routers/prints.py`:
+  - [x] Implementasi `backend/services/print_worker.py`: worker threadpool / antrean latar belakang agar compositing dan proses kirim ke printer tidak pernah memblokir event loop FastAPI; otomatis meneruskan ke printer bila `auto_print_enabled=true` atau menahan di status `queued` untuk mode Manual Queue.
+  - [x] Implementasi `backend/routers/prints.py`:
     - Endpoint customer (token sesi valid): submit print job (validasi Pydantic `selected_photos_json` & `copies >= 1`), cek status job untuk layar `PrintingPage`.
     - Endpoint admin (terautentikasi + guard LAN/localhost): daftar Print Queue, trigger **Print Sekarang**, **Retry** job `failed`, **Cancel** job `queued`/`failed`, download file 300 DPI, serta cek daftar & status printer Windows.
-  - [ ] Buat `frontend/src/components/PrintQueuePanel.tsx` dan integrasikan ke `AdminDashboard.tsx`: pilih printer, toggle Auto-Print vs Manual Queue, daftar job real-time dengan thumbnail output, status error printer jelas, serta tombol Print, Retry, Cancel, dan Download.
+  - [x] Buat `frontend/src/components/PrintQueuePanel.tsx` dan integrasikan ke `AdminDashboard.tsx`: pilih printer, toggle Auto-Print vs Manual Queue, daftar job real-time dengan thumbnail output, status error printer jelas, serta tombol Print, Retry, Cancel, dan Download.
 - File terdampak: `backend/services/compositor.py`, `backend/services/printer.py`, `backend/services/print_worker.py`, `backend/routers/prints.py`, `backend/tests/test_phase5_printing.py`, `frontend/src/components/PrintQueuePanel.tsx`, `frontend/src/pages/AdminDashboard.tsx`
 - Kriteria selesai:
   - Submit cetak menghasilkan file 300 DPI akurat (dimensi piksel sesuai `width_mm × height_mm`, orientasi, dan `safe_margin_mm`) tanpa membuat request API lain melambat.

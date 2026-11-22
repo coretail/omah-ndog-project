@@ -2,24 +2,44 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from backend.config import AppConfig
 from backend.database import db_session, init_db
-from backend.routers import admin, frames, photos, sessions
+from backend.routers import admin, frames, photos, prints, sessions
 from backend.schemas import HealthResponse
 from backend.security import AdminSessionStore, PinLockoutTracker, SlidingWindowRateLimiter
 from backend.services.photo_scanner import PhotoScannerService
+from backend.services.print_worker import PrintWorker
+from backend.services.printer import PrinterBackend, create_default_printer_backend
 
 
-def create_app(config: AppConfig | None = None) -> FastAPI:
+def create_app(
+    config: AppConfig | None = None,
+    *,
+    printer_backend: PrinterBackend | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application instance."""
     cfg = config or AppConfig()
     cfg.ensure_dirs()
     init_db(cfg.db_path, admin_initial_pin=cfg.admin_initial_pin)
 
-    application = FastAPI(title="Self-Photo Studio App", version="0.1.0")
+    resolved_printer_backend = printer_backend or create_default_printer_backend()
+    print_worker = PrintWorker(cfg, resolved_printer_backend)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        print_worker.start()
+        try:
+            yield
+        finally:
+            print_worker.stop()
+
+    application = FastAPI(title="Self-Photo Studio App", version="0.1.0", lifespan=lifespan)
     application.state.config = cfg
     application.state.admin_sessions = AdminSessionStore()
     application.state.pin_lockout = PinLockoutTracker(
@@ -41,11 +61,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         stability_delay_sec=cfg.photo_stability_delay_sec,
         max_concurrency=cfg.thumbnail_max_concurrency,
     )
+    application.state.printer_backend = resolved_printer_backend
+    application.state.print_worker = print_worker
 
     application.include_router(admin.router)
     application.include_router(frames.router)
     application.include_router(photos.router)
     application.include_router(sessions.router)
+    application.include_router(prints.router)
 
     @application.get("/api/health", response_model=HealthResponse, tags=["system"])
     def health_check() -> HealthResponse:

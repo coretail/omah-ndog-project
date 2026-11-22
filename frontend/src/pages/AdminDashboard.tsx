@@ -24,6 +24,7 @@ import {
   setStoredAdminToken,
 } from "../api/client";
 import { FrameSlotEditor } from "../components/FrameSlotEditor";
+import { PrintQueuePanel } from "../components/PrintQueuePanel";
 
 interface AdminDashboardProps {
   onRequireAuth: () => void;
@@ -977,6 +978,14 @@ export function AdminDashboard({ onRequireAuth, onBackToKiosk }: AdminDashboardP
             </div>
           </form>
         </section>
+
+        {/* Print Queue & Printer Section */}
+        <PrintQueuePanel
+          settings={settings}
+          onSettingsUpdated={(updated) => setSettings(updated)}
+          onAuthFailure={handleAuthFailure}
+          onFeedback={setFeedback}
+        />
 
         {/* Tunnel & System Section */}
         <section>
