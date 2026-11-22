@@ -11,6 +11,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "photo_root_dir": "",
     "active_subfolder": "",
     "folder_mode": "active",
+    "filter_photos_after_registration": "false",
     "public_base_url": "",
     "auto_print_enabled": "false",
     "printer_name": "",

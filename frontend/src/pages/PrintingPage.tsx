@@ -102,9 +102,22 @@ export function PrintingPage({
   }
 
   async function handleFinish() {
+    if (!draft.kioskOrigin) {
+      if (
+        !window.confirm(
+          "Tandai selesai di HP ini? Teman lain yang masih memilih foto di HP mereka tetap bisa melanjutkan."
+        )
+      ) {
+        return;
+      }
+      clearDraft(token);
+      setFinishedMobile(true);
+      return;
+    }
+
     if (
       !window.confirm(
-        "Akhiri sesi sekarang? QR Code tidak akan bisa dipakai lagi setelah sesi ditutup."
+        "Akhiri seluruh sesi sekarang? QR Code tidak akan bisa dipakai lagi oleh perangkat mana pun."
       )
     ) {
       return;
@@ -113,19 +126,11 @@ export function PrintingPage({
     try {
       await sessionsApi.completeSession(token);
       clearDraft(token);
-      if (draft.kioskOrigin) {
-        onGoHome();
-      } else {
-        setFinishedMobile(true);
-      }
+      onGoHome();
     } catch (err) {
       if (err instanceof ApiError && err.status === 410) {
         clearDraft(token);
-        if (draft.kioskOrigin) {
-          onGoHome();
-        } else {
-          setFinishedMobile(true);
-        }
+        onGoHome();
       }
     } finally {
       setFinishing(false);

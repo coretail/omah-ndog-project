@@ -126,6 +126,14 @@ def create_session(
         photo_root_dir = settings.get("photo_root_dir", "")
         active_subfolder = settings.get("active_subfolder", "")
         folder_mode = settings.get("folder_mode", "active")
+        default_filter_after = (
+            settings.get("filter_photos_after_registration", "false").lower() == "true"
+        )
+        effective_filter_after = (
+            payload.filter_after_created_at
+            if payload.filter_after_created_at is not None
+            else default_filter_after
+        )
 
         photo_subfolder = _resolve_subfolder_for_session(
             photo_root_dir,
@@ -153,7 +161,7 @@ def create_session(
                 payload.email,
                 1 if payload.consent_accepted else 0,
                 photo_subfolder,
-                1 if payload.filter_after_created_at else 0,
+                1 if effective_filter_after else 0,
                 expires_iso,
                 created_iso,
             ),
@@ -210,9 +218,13 @@ def get_session_qr(token: str, request: Request) -> Response:
     )
 
 
-@router.post("/{token}/complete", response_model=SessionCompleteResponse)
+@router.post(
+    "/{token}/complete",
+    response_model=SessionCompleteResponse,
+    dependencies=[Depends(require_lan_no_tunnel)],
+)
 def complete_session(token: str, request: Request) -> SessionCompleteResponse:
-    """Mark an active session as completed, invalidating further QR access."""
+    """Mark an active session as completed from kiosk/LAN, invalidating further QR access."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
         row = _load_active_session(conn, token)

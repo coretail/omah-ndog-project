@@ -46,6 +46,7 @@ export interface StudioSettings {
   photo_root_dir: string;
   active_subfolder: string;
   folder_mode: "active" | "auto_create";
+  filter_photos_after_registration: boolean;
   public_base_url: string;
   auto_print_enabled: boolean;
   printer_name: string;

@@ -376,7 +376,7 @@ export function SelectPhotoPage({
                     <input
                       type="range"
                       min={1}
-                      max={2.5}
+                      max={3}
                       step={0.1}
                       value={activeAssignment.zoom}
                       onChange={(e) =>
