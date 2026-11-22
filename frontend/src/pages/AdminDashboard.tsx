@@ -1,6 +1,7 @@
 import { ChangeEvent, type CSSProperties, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   FolderOpen,
   Globe,
   LogOut,
@@ -26,9 +27,10 @@ import { FrameSlotEditor } from "../components/FrameSlotEditor";
 
 interface AdminDashboardProps {
   onRequireAuth: () => void;
+  onBackToKiosk?: () => void;
 }
 
-export function AdminDashboard({ onRequireAuth }: AdminDashboardProps) {
+export function AdminDashboard({ onRequireAuth, onBackToKiosk }: AdminDashboardProps) {
   const [categories, setCategories] = useState<FrameCategory[]>([]);
   const [selectedCatId, setSelectedCatId] = useState<number | null>(null);
   const [frames, setFrames] = useState<FrameItem[]>([]);
@@ -403,7 +405,28 @@ export function AdminDashboard({ onRequireAuth }: AdminDashboardProps) {
       <div style={{ maxWidth: 1320, margin: "0 auto", display: "flex", flexDirection: "column", gap: 28 }}>
         {/* Header */}
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-          <div style={{ width: 110 }} />
+          <div style={{ minWidth: 130 }}>
+            {onBackToKiosk && (
+              <button
+                type="button"
+                onClick={onBackToKiosk}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  backgroundColor: "#ffffff",
+                  border: "2px solid var(--brand-blue)",
+                  borderRadius: 999,
+                  padding: "10px 16px",
+                  fontWeight: 700,
+                  color: "var(--brand-blue)",
+                }}
+              >
+                <ArrowLeft size={18} />
+                <span>Kiosk</span>
+              </button>
+            )}
+          </div>
           <h1 className="studio-heading" style={{ fontSize: "clamp(34px, 4.5vw, 64px)", textAlign: "center" }}>
             Admin Dashboard
           </h1>
