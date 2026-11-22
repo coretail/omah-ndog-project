@@ -133,3 +133,7 @@ Perintah manual per komponen:
 - **Isolasi Admin**: Endpoint `/api/admin/*` dan penutupan sesi hanya menerima request dari `localhost`/LAN dan menolak request yang melewati header tunnel publik (`CF-Connecting-IP`, `True-Client-IP`, atau `X-Forwarded-For` publik). Fitur *Browse Folder* hanya aktif dari `localhost`.
 - **Perlindungan Foto Asli**: Proses *auto-cleanup* dan penghapusan data customer hanya menghapus file di dalam `data/thumbnails/` dan `data/outputs/`, sehingga foto asli kamera di `photo_root_dir` tidak pernah dihapus oleh aplikasi.
 - **Validasi Path**: Semua pembacaan berkas foto divalidasi dengan `Path.resolve()` agar tetap berada di dalam subfolder sesi yang sah.
+
+## Panduan Pemakaian
+
+Lihat [Panduan Pemakaian](panduan_pemakaian.md) untuk petunjuk operasional lengkap penggunaan aplikasi, admin, dan pencetakan.
