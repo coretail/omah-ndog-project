@@ -13,6 +13,7 @@ from backend.database import db_session, init_db
 from backend.routers import admin, frames, photos, prints, sessions
 from backend.schemas import HealthResponse
 from backend.security import AdminSessionStore, PinLockoutTracker, SlidingWindowRateLimiter
+from backend.services.cleanup_service import CleanupScheduler
 from backend.services.photo_scanner import PhotoScannerService
 from backend.services.print_worker import PrintWorker
 from backend.services.printer import PrinterBackend, create_default_printer_backend
@@ -30,13 +31,16 @@ def create_app(
 
     resolved_printer_backend = printer_backend or create_default_printer_backend()
     print_worker = PrintWorker(cfg, resolved_printer_backend)
+    cleanup_scheduler = CleanupScheduler(cfg)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         print_worker.start()
+        cleanup_scheduler.start()
         try:
             yield
         finally:
+            cleanup_scheduler.stop()
             print_worker.stop()
 
     application = FastAPI(title="Self-Photo Studio App", version="0.1.0", lifespan=lifespan)
@@ -63,6 +67,7 @@ def create_app(
     )
     application.state.printer_backend = resolved_printer_backend
     application.state.print_worker = print_worker
+    application.state.cleanup_scheduler = cleanup_scheduler
 
     application.include_router(admin.router)
     application.include_router(frames.router)

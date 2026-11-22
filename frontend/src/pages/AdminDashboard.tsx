@@ -23,6 +23,7 @@ import {
   framesApi,
   setStoredAdminToken,
 } from "../api/client";
+import { CustomerHistoryPanel } from "../components/CustomerHistoryPanel";
 import { FrameSlotEditor } from "../components/FrameSlotEditor";
 import { PrintQueuePanel } from "../components/PrintQueuePanel";
 
@@ -990,7 +991,7 @@ export function AdminDashboard({ onRequireAuth, onBackToKiosk }: AdminDashboardP
         {/* Tunnel & System Section */}
         <section>
           <h2 style={{ margin: "0 0 10px", fontSize: 28, fontWeight: 700 }}>
-            Pengaturan Tunnel & Sistem
+            Pengaturan Tunnel &amp; Sistem
           </h2>
           <form
             onSubmit={handleSaveTunnelSettings}
@@ -1048,6 +1049,14 @@ export function AdminDashboard({ onRequireAuth, onBackToKiosk }: AdminDashboardP
             </div>
           </form>
         </section>
+
+        {/* Privacy, Retention & Customer History Section */}
+        <CustomerHistoryPanel
+          settings={settings}
+          onSettingsUpdated={(updated) => setSettings(updated)}
+          onAuthFailure={handleAuthFailure}
+          onFeedback={setFeedback}
+        />
       </div>
 
       {/* Category Create/Edit Modal */}

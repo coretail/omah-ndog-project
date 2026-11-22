@@ -471,3 +471,28 @@ class PrinterInfoResponse(BaseModel):
     status: PrinterStatusLiteral
     status_message: str
     jobs_count: int
+
+
+class CleanupRunResponse(BaseModel):
+    deleted_thumbnails: int
+    deleted_outputs: int
+    freed_bytes: int
+    retention_days: int
+
+
+class CustomerHistoryItemResponse(BaseModel):
+    id: int
+    name: str
+    whatsapp: str
+    email: str
+    photo_subfolder: str
+    status: Literal["active", "completed"]
+    job_count: int
+    total_spent: int
+    created_at: str
+    expires_at: str
+
+
+class CustomerDeleteResponse(BaseModel):
+    status: str
+    deleted_outputs: int
