@@ -35,7 +35,14 @@ class AppConfig:
     rate_limit_max_keys: int = 10_000
     photo_stability_delay_sec: float = 0.25
     thumbnail_max_concurrency: int = 4
+    frontend_dist_dir: Path | None = None
     testing: bool = False
+
+    @property
+    def resolved_frontend_dist_dir(self) -> Path:
+        if self.frontend_dist_dir is not None:
+            return self.frontend_dist_dir
+        return self.project_root / "frontend" / "dist"
 
     @property
     def db_path(self) -> Path:

@@ -106,6 +106,9 @@ def _build_settings_response(settings: dict[str, str], lan_ip: str) -> SettingsR
         photo_root_dir=settings.get("photo_root_dir", ""),
         active_subfolder=settings.get("active_subfolder", ""),
         folder_mode=folder_mode,  # type: ignore[arg-type]
+        filter_photos_after_registration=(
+            settings.get("filter_photos_after_registration", "false").lower() == "true"
+        ),
         public_base_url=settings.get("public_base_url", ""),
         auto_print_enabled=settings.get("auto_print_enabled", "false").lower() == "true",
         printer_name=settings.get("printer_name", ""),
@@ -283,6 +286,12 @@ def update_settings(
             set_setting(conn, "active_subfolder", payload.active_subfolder)
         if payload.folder_mode is not None:
             set_setting(conn, "folder_mode", payload.folder_mode)
+        if payload.filter_photos_after_registration is not None:
+            set_setting(
+                conn,
+                "filter_photos_after_registration",
+                "true" if payload.filter_photos_after_registration else "false",
+            )
         if payload.public_base_url is not None:
             set_setting(conn, "public_base_url", payload.public_base_url)
         if payload.auto_print_enabled is not None:

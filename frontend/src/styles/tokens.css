@@ -7,12 +7,14 @@
   --panel-pink: #ffadd1;
   --panel-pink-light: #fec7de;
   --surface-white: #ffffff;
+  --surface-gray: #d9d9d9;
   --text-dark: #111111;
   --text-muted: #555555;
   --font-display: "Poller One", serif;
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --shadow-heading: 6px 4px 0px #fe4e12;
   --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-pill: 0 6px 0 rgba(0, 0, 0, 0.16);
 }
 
 *,
@@ -38,6 +40,23 @@ body,
   text-shadow: var(--shadow-heading);
   margin: 0;
   font-weight: 400;
+  line-height: 1.15;
+}
+
+.welcome-bg {
+  min-height: 100vh;
+  background-color: var(--bg-yellow);
+  background-image: url("/assets/bg-welcome.png");
+  background-size: cover;
+  background-position: center;
+}
+
+.studio-bg {
+  min-height: 100vh;
+  background-color: var(--bg-yellow);
+  background-image: url("/assets/bg-studio.png");
+  background-size: cover;
+  background-position: center;
 }
 
 .admin-bg {
@@ -47,6 +66,99 @@ body,
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
+}
+
+.pill-btn-orange {
+  border: none;
+  border-radius: 49px;
+  background-color: var(--accent-orange);
+  color: var(--text-dark);
+  font-weight: 700;
+  font-size: clamp(22px, 2.5vw, 34px);
+  padding: 14px 36px;
+  min-height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+  transition: transform 0.12s ease, opacity 0.15s ease;
+}
+
+.pill-btn-orange:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.pill-btn-orange:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.back-arrow-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  border: none;
+  background-color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dark);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.back-arrow-btn:hover {
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+/* Responsive two-column studio layout (Desktop Kiosk + Mobile) */
+.studio-split-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.95fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.welcome-split {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(320px, 42%) 1fr;
+}
+
+.welcome-hero-panel {
+  overflow: hidden;
+  border-top-right-radius: 42px;
+  border-bottom-right-radius: 42px;
+  background-color: #e5e5e5;
+  min-height: 100vh;
+}
+
+.preview-column-sticky {
+  position: sticky;
+  top: 20px;
+}
+
+@media (max-width: 960px) {
+  .studio-split-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .welcome-split {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-hero-panel {
+    min-height: 240px;
+    max-height: 300px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 28px;
+    border-bottom-left-radius: 28px;
+  }
+
+  .preview-column-sticky {
+    position: static;
+  }
 }
 
 button {

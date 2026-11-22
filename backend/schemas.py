@@ -168,6 +168,7 @@ class SettingsResponse(BaseModel):
     photo_root_dir: str
     active_subfolder: str
     folder_mode: Literal["active", "auto_create"]
+    filter_photos_after_registration: bool = False
     public_base_url: str
     auto_print_enabled: bool
     printer_name: str
@@ -182,6 +183,7 @@ class SettingsUpdateRequest(BaseModel):
     photo_root_dir: str | None = None
     active_subfolder: str | None = None
     folder_mode: Literal["active", "auto_create"] | None = None
+    filter_photos_after_registration: bool | None = None
     public_base_url: str | None = None
     auto_print_enabled: bool | None = None
     printer_name: str | None = None
@@ -223,7 +225,7 @@ class SessionCreateRequest(BaseModel):
     whatsapp: str = Field(min_length=6, max_length=30)
     email: str = Field(min_length=5, max_length=120)
     consent_accepted: bool
-    filter_after_created_at: bool = False
+    filter_after_created_at: bool | None = None
 
     @field_validator("name")
     @classmethod

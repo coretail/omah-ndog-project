@@ -477,6 +477,20 @@ def test_session_registration_blocked_via_tunnel_and_public_ip(tmp_path: Path) -
             == 200
         )
 
+        # Completing session via tunnel or public IP is blocked (403) so one phone cannot kill shared QR
+        assert (
+            local_client.post(
+                f"/api/sessions/{token}/complete",
+                headers={"CF-Connecting-IP": "198.51.100.5"},
+            ).status_code
+            == 403
+        )
+        assert local_client.get(f"/api/sessions/{token}").status_code == 200
+
+        # Direct Kiosk/LAN completes the session cleanly
+        assert local_client.post(f"/api/sessions/{token}/complete").status_code == 200
+        assert local_client.get(f"/api/sessions/{token}").status_code == 410
+
 
 def test_main_module_has_no_import_time_app() -> None:
     assert not hasattr(backend_main, "app")

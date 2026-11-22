@@ -240,6 +240,30 @@ def test_photo_filter_after_created_at_on_reused_subfolder(tmp_path: Path) -> No
         assert unfiltered_list.status_code == 200
         assert [p["filename"] for p in unfiltered_list.json()["photos"]] == ["new.jpg", "old.jpg"]
 
+        # Enabling filter_photos_after_registration in Admin applies automatically on new sessions
+        tok = client.post("/api/admin/auth/login", json={"pin": "482910"}).json()["token"]
+        upd = client.put(
+            "/api/admin/settings",
+            json={"filter_photos_after_registration": True},
+            headers={"Authorization": f"Bearer {tok}"},
+        )
+        assert upd.status_code == 200
+        assert upd.json()["filter_photos_after_registration"] is True
+
+        reg3 = client.post(
+            "/api/sessions",
+            json={
+                "name": "Joko",
+                "whatsapp": "081234567898",
+                "email": "joko@example.com",
+                "consent_accepted": True,
+            },
+        )
+        assert reg3.status_code == 201
+        default_filtered = client.get(f"/api/photos/{reg3.json()['token']}")
+        assert default_filtered.status_code == 200
+        assert [p["filename"] for p in default_filtered.json()["photos"]] == ["new.jpg"]
+
 
 def test_photo_session_invalidation_rate_limit_and_semaphore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

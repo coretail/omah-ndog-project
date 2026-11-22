@@ -46,6 +46,7 @@ export interface StudioSettings {
   photo_root_dir: string;
   active_subfolder: string;
   folder_mode: "active" | "auto_create";
+  filter_photos_after_registration: boolean;
   public_base_url: string;
   auto_print_enabled: boolean;
   printer_name: string;
@@ -285,5 +286,135 @@ export const framesApi = {
       { method: "DELETE" },
       true
     );
+  },
+};
+
+export interface CustomerSessionCreate {
+  name: string;
+  whatsapp: string;
+  email: string;
+  consent_accepted: boolean;
+  filter_after_created_at?: boolean;
+}
+
+export interface CustomerSession {
+  id: number;
+  token: string;
+  name: string;
+  whatsapp: string;
+  email: string;
+  photo_subfolder: string;
+  status: "active" | "completed";
+  qr_target_url: string;
+  qr_mode: "tunnel" | "lan";
+  expires_at: string;
+  created_at: string;
+}
+
+export interface SessionPublicInfo {
+  id: number;
+  name: string;
+  photo_subfolder: string;
+  status: "active" | "completed";
+  expires_at: string;
+  created_at: string;
+}
+
+export interface PhotoItem {
+  filename: string;
+  width: number;
+  height: number;
+  size_bytes: number;
+  modified_at: string;
+  thumb_url: string;
+  preview_url: string;
+}
+
+export interface SessionPhotoList {
+  subfolder: string;
+  photos: PhotoItem[];
+}
+
+export interface SelectedPhotoSlot {
+  slotId: string;
+  filename: string;
+  offsetX: number;
+  offsetY: number;
+  zoom: number;
+}
+
+export interface SubmitPrintJobRequest {
+  frame_id: number;
+  copies: number;
+  selected_photos: SelectedPhotoSlot[];
+}
+
+export interface PrintJobStatus {
+  id: number;
+  status: "queued" | "printing" | "printed" | "failed" | "cancelled";
+  copies: number;
+  total_price: number;
+  error_message: string;
+}
+
+export const sessionsApi = {
+  createSession(payload: CustomerSessionCreate): Promise<CustomerSession> {
+    return requestJson<CustomerSession>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getSession(token: string): Promise<SessionPublicInfo> {
+    return requestJson<SessionPublicInfo>(`/api/sessions/${encodeURIComponent(token)}`);
+  },
+
+  completeSession(token: string): Promise<{ id: number; status: "completed" }> {
+    return requestJson<{ id: number; status: "completed" }>(
+      `/api/sessions/${encodeURIComponent(token)}/complete`,
+      { method: "POST" }
+    );
+  },
+
+  getQrImageUrl(token: string): string {
+    return `/api/sessions/${encodeURIComponent(token)}/qr`;
+  },
+};
+
+export const photosApi = {
+  listPhotos(token: string): Promise<SessionPhotoList> {
+    return requestJson<SessionPhotoList>(`/api/photos/${encodeURIComponent(token)}`);
+  },
+};
+
+export const printsApi = {
+  async submitJob(
+    token: string,
+    payload: SubmitPrintJobRequest
+  ): Promise<PrintJobStatus | null> {
+    try {
+      return await requestJson<PrintJobStatus>(`/api/prints/${encodeURIComponent(token)}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  },
+
+  async getJobStatus(token: string, jobId: number): Promise<PrintJobStatus | null> {
+    try {
+      return await requestJson<PrintJobStatus>(
+        `/api/prints/${encodeURIComponent(token)}/${jobId}`
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return null;
+      }
+      throw err;
+    }
   },
 };

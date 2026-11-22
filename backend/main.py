@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from backend.config import AppConfig
 from backend.database import db_session, init_db
@@ -52,5 +53,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             row = conn.execute("PRAGMA journal_mode;").fetchone()
             journal_mode = str(row[0]).lower() if row else "unknown"
         return HealthResponse(status="ok", database_journal_mode=journal_mode)
+
+    dist_resolved = cfg.resolved_frontend_dist_dir.resolve()
+    index_html = dist_resolved / "index.html"
+    if index_html.is_file():
+
+        @application.get("/{full_path:path}", include_in_schema=False)
+        def serve_spa(full_path: str) -> FileResponse:
+            cleaned = full_path.lstrip("/")
+            if cleaned == "api" or cleaned.startswith("api/"):
+                raise HTTPException(status_code=404, detail="Not found.")
+            if cleaned:
+                candidate = (dist_resolved / cleaned).resolve()
+                if candidate.is_relative_to(dist_resolved) and candidate.is_file():
+                    return FileResponse(candidate)
+            return FileResponse(index_html, media_type="text/html")
 
     return application
