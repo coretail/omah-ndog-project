@@ -44,5 +44,21 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
       },
     },
+    {
+      name: "phase5-kiosk",
+      testMatch: /phase5-(manual-queue|printer-selection|autoprint-failures)\.spec\.ts/,
+      use: {
+        browserName: "chromium",
+        viewport: { width: 1920, height: 1080 },
+      },
+    },
+    {
+      name: "phase5-mobile",
+      testMatch: /phase5-mobile-security\.spec\.ts/,
+      use: {
+        browserName: "chromium",
+        viewport: { width: 390, height: 844 },
+      },
+    },
   ],
 });
