@@ -1,0 +1,60 @@
+:root {
+  --bg-yellow: #ffc800;
+  --accent-orange-red: #fe4e12;
+  --accent-orange: #ff8d28;
+  --accent-yellow: #ffcc00;
+  --brand-blue: #0143a1;
+  --panel-pink: #ffadd1;
+  --panel-pink-light: #fec7de;
+  --surface-white: #ffffff;
+  --text-dark: #111111;
+  --text-muted: #555555;
+  --font-display: "Poller One", serif;
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --shadow-heading: 6px 4px 0px #fe4e12;
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  font-family: var(--font-sans);
+  color: var(--text-dark);
+  background-color: var(--bg-yellow);
+}
+
+.studio-heading {
+  font-family: var(--font-display);
+  color: var(--brand-blue);
+  text-shadow: var(--shadow-heading);
+  margin: 0;
+  font-weight: 400;
+}
+
+.admin-bg {
+  min-height: 100vh;
+  background-color: var(--bg-yellow);
+  background-image: url("/assets/bg-admin.png");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input,
+select {
+  font-family: inherit;
+}
