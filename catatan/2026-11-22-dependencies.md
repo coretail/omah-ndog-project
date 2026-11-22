@@ -29,3 +29,4 @@
 | `typescript` | Pengecekan tipe statis (`tsc --noEmit`) dengan mode `strict`. |
 | `@types/react` | Definisi tipe TypeScript untuk React. |
 | `@types/react-dom` | Definisi tipe TypeScript untuk React DOM. |
+| `@playwright/test` | Framework E2E browser testing (`devDependency`) untuk verifikasi otomatis alur Kiosk (`1920×1080`) dan Mobile QR (`390×844`) di Chromium. |

@@ -29,10 +29,14 @@ def test_spa_serving_and_api_404_isolation(tmp_path: Path) -> None:
         assert asset_resp.status_code == 200
         assert "console.log('ok')" in asset_resp.text
 
-        # Unknown /api/* routes must never fall back to index.html
+        # Unknown /api/* routes (both GET and POST) must never fall back to index.html or 405
         api_missing = client.get("/api/does-not-exist")
         assert api_missing.status_code == 404
         assert api_missing.json()["detail"] == "Not found."
+
+        api_post_missing = client.post("/api/does-not-exist", json={})
+        assert api_post_missing.status_code == 404
+        assert api_post_missing.json()["detail"] == "Not found."
 
         # Path traversal outside dist falls back to SPA index, never exposing secret.txt
         traversal = client.get("/../secret.txt")
