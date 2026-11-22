@@ -406,10 +406,8 @@ def resolve_rate_limit_key(request: Request) -> str:
     return client_ip or "unknown"
 
 
-def rate_limit_public(request: Request) -> None:
-    """FastAPI dependency applying per-IP rate limiting to public customer endpoints."""
+def _apply_rate_limit(request: Request, limiter: SlidingWindowRateLimiter) -> None:
     client_key = resolve_rate_limit_key(request)
-    limiter: SlidingWindowRateLimiter = request.app.state.public_rate_limiter
     allowed, retry_after = limiter.check(client_key)
     if not allowed:
         raise HTTPException(
@@ -417,3 +415,13 @@ def rate_limit_public(request: Request) -> None:
             detail="Rate limit exceeded. Please slow down.",
             headers={"Retry-After": str(retry_after)},
         )
+
+
+def rate_limit_public(request: Request) -> None:
+    """FastAPI dependency applying per-IP rate limiting to public customer API endpoints."""
+    _apply_rate_limit(request, request.app.state.public_rate_limiter)
+
+
+def rate_limit_media(request: Request) -> None:
+    """FastAPI dependency applying higher-capacity per-IP rate limiting to photo assets."""
+    _apply_rate_limit(request, request.app.state.media_rate_limiter)

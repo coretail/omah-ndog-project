@@ -27,11 +27,14 @@ router = APIRouter(
 _SAFE_SLUG_RE = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
-def _parse_iso_utc(raw: str) -> datetime:
+def parse_iso_utc(raw: str) -> datetime:
     dt = datetime.fromisoformat(raw)
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+_parse_iso_utc = parse_iso_utc
 
 
 def _resolve_subfolder_for_session(
@@ -73,7 +76,7 @@ def _resolve_subfolder_for_session(
     return active_subfolder
 
 
-def _load_active_session(conn: sqlite3.Connection, token: str) -> sqlite3.Row:
+def load_active_session(conn: sqlite3.Connection, token: str) -> sqlite3.Row:
     """Load session by token and ensure it is neither completed nor expired."""
     row = conn.execute(
         "SELECT * FROM customer_sessions WHERE token = ?",
@@ -89,13 +92,16 @@ def _load_active_session(conn: sqlite3.Connection, token: str) -> sqlite3.Row:
             status_code=status.HTTP_410_GONE,
             detail="Session is already completed.",
         )
-    expires_at = _parse_iso_utc(str(row["expires_at"]))
+    expires_at = parse_iso_utc(str(row["expires_at"]))
     if datetime.now(timezone.utc) >= expires_at:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Session has expired.",
         )
     return row
+
+
+_load_active_session = load_active_session
 
 
 @router.post(
