@@ -202,15 +202,16 @@ F:\omah-ndog-project\
 ## Fase 6: Hardening, Cleanup, & Pengujian Menyeluruh
 - Tujuan: Melengkapi fitur manajemen privasi & retensi file, histori customer + Export CSV, launcher operator Windows 1-klik, serta pengujian menyeluruh end-to-end (online tunnel, offline LAN, keamanan, dan UI).
 - Tugas:
-  - [ ] Implementasi `backend/services/cleanup_service.py`: pembersihan otomatis file `data/thumbnails/` dan `data/outputs/` lebih tua dari `retention_days` saat startup dan secara periodik di background, ditambah endpoint pemicu manual di Admin.
-  - [ ] Lengkapi `backend/routers/admin.py` & UI `AdminDashboard.tsx`: tabel histori customer (`Name`, `Whatsapp`, `Email`, jumlah job, total harga), tombol **Export CSV**, dan tombol **Hapus Data Customer** (menghapus record & file output terkait tanpa menghapus foto asli kamera).
-  - [ ] Buat `start_studio.bat`: launcher 1-klik untuk menjalankan server FastAPI (otomatis mendeteksi apakah build frontend tersedia) dan membuka Kiosk di browser, beserta instruksi singkat konfigurasi Cloudflare Named Tunnel (dan catatan batasan Quick Tunnel).
-  - [ ] Audit keamanan & kualitas menyeluruh:
+  - [x] Implementasi `backend/services/cleanup_service.py`: pembersihan otomatis file `data/thumbnails/` dan `data/outputs/` lebih tua dari `retention_days` saat startup dan secara periodik di background, ditambah endpoint pemicu manual di Admin.
+  - [x] Lengkapi `backend/routers/admin.py` & UI `AdminDashboard.tsx`: tabel histori customer (`Name`, `Whatsapp`, `Email`, jumlah job, total harga), tombol **Export CSV**, dan tombol **Hapus Data Customer** (menghapus record & file output terkait tanpa menghapus foto asli kamera).
+  - [x] Buat `start_studio.bat`: launcher 1-klik untuk menjalankan server FastAPI (otomatis mendeteksi apakah build frontend tersedia) dan membuka Kiosk di browser, beserta instruksi singkat konfigurasi Cloudflare Named Tunnel (dan catatan batasan Quick Tunnel).
+  - [x] Audit keamanan & kualitas menyeluruh:
     - Pastikan tidak ada secret/kredensial hardcoded di kode.
     - Pastikan tidak ada blocking call (Pillow / `win32print`) di handler `async def`.
     - Pastikan `/api/admin/*` dan `/api/prints/queue*` terblokir dari header tunnel.
     - Pastikan `.gitignore` mengecualikan `data/` dan file sensitif lokal.
-  - [ ] Uji end-to-end lengkap: mode offline LAN, mode public URL, multi-perangkat bersamaan, retry cetak gagal, cleanup retensi, dan hapus data customer.
+  - [x] Uji otomatis menyeluruh (`pytest` Fase 1–6 & Playwright E2E: offline/mocked print, multi-perangkat bersamaan, retry/cancel cetak gagal, cleanup retensi, dan hapus data customer).
+  - [ ] Uji manual operasional di PC studio (`start_studio.bat`, mode offline LAN HP nyata, public URL Cloudflare Named Tunnel, dan cetak fisik / `Microsoft Print to PDF`).
 - File terdampak: `backend/services/cleanup_service.py`, `backend/routers/admin.py`, `backend/tests/test_phase6_hardening_cleanup.py`, `frontend/src/pages/AdminDashboard.tsx`, `start_studio.bat`, `.gitignore`
 - Kriteria selesai:
   - Seluruh suite `pytest` dan build `frontend` (`tsc --noEmit && npm run build`) lulus 100%.

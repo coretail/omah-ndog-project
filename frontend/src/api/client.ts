@@ -61,6 +61,38 @@ export interface SubfolderInfo {
   used_by_sessions: number;
 }
 
+export interface CleanupRunResult {
+  deleted_thumbnails: number;
+  deleted_outputs: number;
+  freed_bytes: number;
+  retention_days: number;
+}
+
+export interface CustomerHistoryItem {
+  id: number;
+  name: string;
+  whatsapp: string;
+  email: string;
+  photo_subfolder: string;
+  status: "active" | "completed";
+  job_count: number;
+  total_spent: number;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface CustomerHistoryList {
+  items: CustomerHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CustomerDeleteResult {
+  status: string;
+  deleted_outputs: number;
+}
+
 export class ApiError extends Error {
   status: number;
   retryAfter?: number;
@@ -190,6 +222,34 @@ export const adminApi = {
         method: "POST",
         body: JSON.stringify({ name }),
       },
+      true
+    );
+  },
+
+  runCleanup(): Promise<CleanupRunResult> {
+    return requestJson<CleanupRunResult>(
+      "/api/admin/cleanup/run",
+      { method: "POST" },
+      true
+    );
+  },
+
+  listCustomers(limit = 100, offset = 0): Promise<CustomerHistoryList> {
+    return requestJson<CustomerHistoryList>(
+      `/api/admin/customers?limit=${limit}&offset=${offset}`,
+      {},
+      true
+    );
+  },
+
+  exportCustomersCsv(): Promise<Blob> {
+    return fetchAuthenticatedBlob("/api/admin/customers/export.csv");
+  },
+
+  deleteCustomer(sessionId: number): Promise<CustomerDeleteResult> {
+    return requestJson<CustomerDeleteResult>(
+      `/api/admin/customers/${sessionId}`,
+      { method: "DELETE" },
       true
     );
   },

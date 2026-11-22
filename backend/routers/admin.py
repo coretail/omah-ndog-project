@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import csv
+import io
+import logging
 import os
+import sqlite3
 from pathlib import Path
+from typing import Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
-from backend.database import db_session, get_all_settings, get_setting, set_setting
+from backend.database import db_immediate_session, db_session, get_all_settings, get_setting, set_setting
 from backend.schemas import (
     AdminAuthStatusResponse,
     AdminLoginResponse,
     BrowseFolderResponse,
+    CleanupRunResponse,
+    CustomerDeleteResponse,
+    CustomerHistoryItemResponse,
+    CustomerHistoryListResponse,
     PinChangeRequest,
     PinLoginRequest,
     PinSetupRequest,
@@ -30,8 +39,15 @@ from backend.security import (
     require_localhost_only,
     verify_pin,
 )
+from backend.services.cleanup_service import (
+    delete_session_outputs,
+    get_retention_days,
+    run_retention_cleanup,
+)
 from backend.services.photo_scanner import SUPPORTED_IMAGE_EXTENSIONS
 from backend.services.qr_service import detect_lan_ip
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/admin",
@@ -105,7 +121,7 @@ def _build_settings_response(settings: dict[str, str], lan_ip: str) -> SettingsR
     return SettingsResponse(
         photo_root_dir=settings.get("photo_root_dir", ""),
         active_subfolder=settings.get("active_subfolder", ""),
-        folder_mode=folder_mode,  # type: ignore[arg-type]
+        folder_mode=cast(Literal["active", "auto_create"], folder_mode),
         filter_photos_after_registration=(
             settings.get("filter_photos_after_registration", "false").lower() == "true"
         ),
@@ -426,3 +442,199 @@ def create_subfolder(
         photo_count=photo_count,
         used_by_sessions=used_count,
     )
+
+
+def _sanitize_csv_cell(value: str) -> str:
+    """Neutralize spreadsheet formula injection characters including leading whitespace prefixes."""
+    if not value:
+        return value
+    stripped = value.lstrip(" \t\r\n")
+    if value[0] in ("=", "+", "-", "@", "\t", "\r") or (
+        stripped and stripped[0] in ("=", "+", "-", "@")
+    ):
+        return f"'{value}"
+    return value
+
+
+def _query_customer_history(
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[CustomerHistoryItemResponse]:
+    base_sql = """
+        SELECT
+            cs.id,
+            cs.name,
+            cs.whatsapp,
+            cs.email,
+            cs.photo_subfolder,
+            cs.status,
+            cs.created_at,
+            cs.expires_at,
+            COUNT(pj.id) AS job_count,
+            COALESCE(
+                SUM(CASE WHEN pj.status = 'printed' THEN pj.total_price ELSE 0 END),
+                0
+            ) AS total_spent
+        FROM customer_sessions cs
+        LEFT JOIN print_jobs pj ON pj.session_id = cs.id
+        GROUP BY cs.id
+        ORDER BY cs.id DESC
+    """
+    if limit is not None:
+        rows = conn.execute(f"{base_sql} LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+    else:
+        rows = conn.execute(base_sql).fetchall()
+
+    return [
+        CustomerHistoryItemResponse(
+            id=int(r["id"]),
+            name=str(r["name"]),
+            whatsapp=str(r["whatsapp"]),
+            email=str(r["email"]),
+            photo_subfolder=str(r["photo_subfolder"]),
+            status=cast(Literal["active", "completed"], str(r["status"])),
+            job_count=int(r["job_count"]),
+            total_spent=int(r["total_spent"]),
+            created_at=str(r["created_at"]),
+            expires_at=str(r["expires_at"]),
+        )
+        for r in rows
+    ]
+
+
+@router.post("/cleanup/run", response_model=CleanupRunResponse)
+def trigger_retention_cleanup(
+    request: Request,
+    _admin_session: str = Depends(require_admin_auth),
+) -> CleanupRunResponse:
+    """Manually run retention cleanup for cached thumbnails and rendered 300 DPI outputs."""
+    config = get_app_config(request)
+    with db_session(config.db_path) as conn:
+        retention_days = get_retention_days(conn)
+
+    result = run_retention_cleanup(
+        config.thumbnails_dir,
+        config.outputs_dir,
+        retention_days,
+    )
+    return CleanupRunResponse(
+        deleted_thumbnails=result.deleted_thumbnails,
+        deleted_outputs=result.deleted_outputs,
+        freed_bytes=result.freed_bytes,
+        retention_days=retention_days,
+    )
+
+
+@router.get("/customers", response_model=CustomerHistoryListResponse)
+def list_customers(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _admin_session: str = Depends(require_admin_auth),
+) -> CustomerHistoryListResponse:
+    """List customer sessions along with print job counts and printed totals."""
+    config = get_app_config(request)
+    with db_session(config.db_path) as conn:
+        total_row = conn.execute("SELECT COUNT(*) AS cnt FROM customer_sessions").fetchone()
+        total = int(total_row["cnt"]) if total_row is not None else 0
+        items = _query_customer_history(conn, limit=limit, offset=offset)
+    return CustomerHistoryListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/customers/export.csv")
+def export_customers_csv(
+    request: Request,
+    _admin_session: str = Depends(require_admin_auth),
+) -> Response:
+    """Export all customer history and printed totals as UTF-8 CSV without truncation."""
+    config = get_app_config(request)
+    with db_session(config.db_path) as conn:
+        items = _query_customer_history(conn, limit=None)
+
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "ID",
+            "Name",
+            "Whatsapp",
+            "Email",
+            "Subfolder",
+            "Status",
+            "Job Count",
+            "Total Tercetak (Rp)",
+            "Created At",
+            "Expires At",
+        ]
+    )
+    for item in items:
+        writer.writerow(
+            [
+                item.id,
+                _sanitize_csv_cell(item.name),
+                _sanitize_csv_cell(item.whatsapp),
+                _sanitize_csv_cell(item.email),
+                _sanitize_csv_cell(item.photo_subfolder),
+                item.status,
+                item.job_count,
+                item.total_spent,
+                item.created_at,
+                item.expires_at,
+            ]
+        )
+
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="studio_customers.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.delete("/customers/{session_id}", response_model=CustomerDeleteResponse)
+def delete_customer_data(
+    session_id: int,
+    request: Request,
+    _admin_session: str = Depends(require_admin_auth),
+) -> CustomerDeleteResponse:
+    """Atomically delete a customer session, its print jobs, and rendered outputs (never camera photos)."""
+    config = get_app_config(request)
+    with db_immediate_session(config.db_path) as conn:
+        existing = conn.execute(
+            "SELECT id FROM customer_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Customer session not found.")
+
+        printing_row = conn.execute(
+            "SELECT id FROM print_jobs WHERE session_id = ? AND status = 'printing' LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if printing_row is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot delete customer data while a print job is actively printing.",
+            )
+
+        jobs_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM print_jobs WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        deleted_jobs = int(jobs_row["cnt"]) if jobs_row is not None else 0
+
+        conn.execute("DELETE FROM customer_sessions WHERE id = ?", (session_id,))
+
+    deleted_outputs = delete_session_outputs(config.outputs_dir, session_id)
+    logger.info(
+        "Deleted customer session_id=%d (jobs=%d, deleted_outputs=%d)",
+        session_id,
+        deleted_jobs,
+        deleted_outputs,
+    )
+    return CustomerDeleteResponse(status="deleted", deleted_outputs=deleted_outputs)
