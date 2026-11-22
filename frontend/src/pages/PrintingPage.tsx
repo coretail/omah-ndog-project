@@ -34,13 +34,20 @@ export function PrintingPage({
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | null = null;
 
     async function checkState() {
       try {
         await sessionsApi.getSession(token);
         if (draft.lastJobId !== null) {
           const st = await printsApi.getJobStatus(token, draft.lastJobId);
-          if (!cancelled && st) setJobStatus(st);
+          if (!cancelled) {
+            setJobStatus(st);
+            if ((st.status === "printed" || st.status === "cancelled") && timer !== null) {
+              window.clearInterval(timer);
+              timer = null;
+            }
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -54,8 +61,9 @@ export function PrintingPage({
     }
 
     void checkState();
-    const timer =
-      draft.lastJobId !== null ? window.setInterval(() => void checkState(), 3000) : null;
+    if (draft.lastJobId !== null) {
+      timer = window.setInterval(() => void checkState(), 3000);
+    }
     return () => {
       cancelled = true;
       if (timer !== null) window.clearInterval(timer);
@@ -186,7 +194,9 @@ export function PrintingPage({
 
         <div
           style={{
-            backgroundColor: "rgba(255,255,255,0.9)",
+            backgroundColor:
+              jobStatus?.status === "failed" ? "#fee2e2" : "rgba(255,255,255,0.9)",
+            color: jobStatus?.status === "failed" ? "#991b1b" : "inherit",
             borderRadius: 999,
             padding: "10px 20px",
             display: "inline-flex",
@@ -196,10 +206,15 @@ export function PrintingPage({
             fontSize: 14,
           }}
         >
-          <Printer size={18} color="var(--brand-blue)" />
+          <Printer
+            size={18}
+            color={jobStatus?.status === "failed" ? "#991b1b" : "var(--brand-blue)"}
+          />
           <span>
             {jobStatus
-              ? STATUS_LABELS[jobStatus.status]
+              ? jobStatus.status === "failed" && jobStatus.error_message
+                ? `${STATUS_LABELS.failed}: ${jobStatus.error_message}`
+                : STATUS_LABELS[jobStatus.status]
               : "Pesanan desain Anda telah dicatat untuk diproses"}
           </span>
         </div>
