@@ -60,5 +60,13 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
       },
     },
+    {
+      name: "phase6-hardening",
+      testMatch: /phase6-.*\.spec\.ts/,
+      use: {
+        browserName: "chromium",
+        viewport: { width: 1920, height: 1080 },
+      },
+    },
   ],
 });

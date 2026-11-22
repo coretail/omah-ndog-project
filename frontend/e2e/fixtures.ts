@@ -1,13 +1,26 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { APIRequestContext, expect, Locator, Page } from "@playwright/test";
+
+const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(E2E_DIR, "..", "..");
+const VENV_PYTHON = path.join(REPO_ROOT, "venv", "Scripts", "python.exe");
+const DB_HELPER_SCRIPT = path.join(E2E_DIR, "db_helper.py");
 
 export const E2E_BASE_URL = "http://127.0.0.1:8123";
 export const E2E_ADMIN_PIN = process.env.ADMIN_INITIAL_PIN || "482910";
 export const E2E_BASE_DIR = path.join(os.tmpdir(), "omah-ndog-e2e");
+export const E2E_DATA_DIR = path.join(E2E_BASE_DIR, "data");
+export const E2E_DB_PATH = path.join(E2E_DATA_DIR, "studio.db");
+export const E2E_THUMBNAILS_DIR = path.join(E2E_DATA_DIR, "thumbnails");
+export const E2E_OUTPUTS_DIR = path.join(E2E_DATA_DIR, "outputs");
 export const E2E_PHOTOS_ROOT = path.join(E2E_BASE_DIR, "e2e_photos");
 export const E2E_SUBFOLDER = "sesi-e2e";
+export const E2E_CAMERA_DIR = path.join(E2E_PHOTOS_ROOT, E2E_SUBFOLDER);
+export const E2E_CAMERA_FILENAMES = ["photo_1.jpg", "photo_2.jpg", "photo_3.jpg"] as const;
 export const E2E_FRAME_PNG_PATH = path.join(E2E_BASE_DIR, "e2e_assets", "frame-4r.png");
 export const E2E_PRINTER_STATE_PATH = path.join(E2E_BASE_DIR, "printer_state.json");
 export const E2E_PRINTED_JOBS_PATH = path.join(E2E_BASE_DIR, "printed_jobs.jsonl");
@@ -39,7 +52,12 @@ export interface PageErrorGuard {
 
 export function attachErrorGuards(
   page: Page,
-  options: { allowExpected410?: boolean } = {}
+  options: {
+    allowExpected401?: boolean;
+    allowExpected403?: boolean;
+    allowExpected409?: boolean;
+    allowExpected410?: boolean;
+  } = {}
 ): PageErrorGuard {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
@@ -51,6 +69,9 @@ export function attachErrorGuards(
   page.on("console", (msg) => {
     if (msg.type() !== "error") return;
     const text = msg.text();
+    if (options.allowExpected401 && text.includes("401 (Unauthorized)")) return;
+    if (options.allowExpected403 && text.includes("403 (Forbidden)")) return;
+    if (options.allowExpected409 && text.includes("409 (Conflict)")) return;
     if (options.allowExpected410 && text.includes("410 (Gone)")) return;
     consoleErrors.push(text);
   });
@@ -302,4 +323,118 @@ export async function ensureStudioConfigured(request: APIRequestContext): Promis
     },
   });
   expect(slotsRes.ok()).toBe(true);
+}
+
+export function runDbHelper(args: string[]): string {
+  return execFileSync(VENV_PYTHON, [DB_HELPER_SCRIPT, ...args], {
+    encoding: "utf-8",
+    env: { ...process.env, STUDIO_DATA_DIR: E2E_DATA_DIR },
+  });
+}
+
+export function assertCameraPhotosIntact(): void {
+  for (const filename of E2E_CAMERA_FILENAMES) {
+    const photoPath = path.join(E2E_CAMERA_DIR, filename);
+    expect(fs.existsSync(photoPath), `Camera photo missing: ${photoPath}`).toBe(true);
+    const info = readJpegInfo(fs.readFileSync(photoPath));
+    expect(info.width, `Invalid camera JPEG width for ${filename}`).toBeGreaterThan(0);
+    expect(info.height, `Invalid camera JPEG height for ${filename}`).toBeGreaterThan(0);
+  }
+}
+
+export async function resetPhase6State(request: APIRequestContext): Promise<void> {
+  setPrinterMode("ready", "");
+  fs.mkdirSync(E2E_BASE_DIR, { recursive: true });
+  fs.writeFileSync(E2E_PRINTED_JOBS_PATH, "", "utf-8");
+  runDbHelper(["reset-customer-data"]);
+  await ensureStudioConfigured(request);
+  assertCameraPhotosIntact();
+}
+
+export async function getDefaultTwoSlotFrame(
+  request: APIRequestContext
+): Promise<{ id: number; category_id: number; price: number; slotIds: string[] }> {
+  const catsRes = await request.get("/api/frames/categories");
+  expect(catsRes.ok()).toBe(true);
+  const cats = (await catsRes.json()) as Array<{ id: number; name: string; price: number }>;
+  const cat4R = cats.find((c) => c.name === "4R") ?? cats[0];
+  expect(cat4R).toBeTruthy();
+
+  const framesRes = await request.get(`/api/frames?category_id=${cat4R.id}`);
+  expect(framesRes.ok()).toBe(true);
+  const frames = (await framesRes.json()) as Array<{
+    id: number;
+    category_id: number;
+    slots: Array<{ id: string }>;
+  }>;
+  const frame = frames.find((f) => f.slots.length >= 2);
+  expect(frame).toBeTruthy();
+  return {
+    id: frame!.id,
+    category_id: frame!.category_id,
+    price: cat4R.price,
+    slotIds: frame!.slots.map((s) => s.id),
+  };
+}
+
+export function getCustomerHistorySection(page: Page): Locator {
+  return page
+    .getByRole("heading", { name: "Privasi, Retensi & Histori Customer" })
+    .locator("xpath=ancestor::section[1]");
+}
+
+export function getPrintQueueSection(page: Page): Locator {
+  return page
+    .getByRole("heading", { name: /Print Queue/ })
+    .locator("xpath=ancestor::section[1]");
+}
+
+export function getTunnelSection(page: Page): Locator {
+  return page
+    .getByRole("heading", { name: "Pengaturan Tunnel & Sistem" })
+    .locator("xpath=ancestor::section[1]");
+}
+
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\r" || ch === "\n") {
+      if (ch === "\r" && text[i + 1] === "\n") {
+        i++;
+      }
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
 }
