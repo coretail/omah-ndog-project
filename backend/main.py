@@ -30,6 +30,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         window_seconds=cfg.rate_limit_window_seconds,
         max_keys=cfg.rate_limit_max_keys,
     )
+    application.state.media_rate_limiter = SlidingWindowRateLimiter(
+        max_requests=cfg.media_rate_limit_requests,
+        window_seconds=cfg.rate_limit_window_seconds,
+        max_keys=cfg.rate_limit_max_keys,
+    )
     application.state.photo_scanner = PhotoScannerService(
         thumbnails_dir=cfg.thumbnails_dir,
         stability_delay_sec=cfg.photo_stability_delay_sec,

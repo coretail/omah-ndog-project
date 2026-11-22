@@ -8,14 +8,10 @@ from fastapi.responses import FileResponse
 from backend.database import db_session, get_setting
 from backend.routers.sessions import load_active_session, parse_iso_utc
 from backend.schemas import PhotoItemResponse, SessionPhotoListResponse
-from backend.security import get_app_config, rate_limit_public
+from backend.security import get_app_config, rate_limit_media, rate_limit_public
 from backend.services.photo_scanner import PhotoPathError, PhotoScannerService
 
-router = APIRouter(
-    prefix="/api/photos",
-    tags=["photos"],
-    dependencies=[Depends(rate_limit_public)],
-)
+router = APIRouter(prefix="/api/photos", tags=["photos"])
 
 
 def _load_session_photo_context(request: Request, token: str) -> tuple[str, str, float | None]:
@@ -29,7 +25,11 @@ def _load_session_photo_context(request: Request, token: str) -> tuple[str, str,
     return photo_root_dir, photo_subfolder, min_mtime
 
 
-@router.get("/{token}", response_model=SessionPhotoListResponse)
+@router.get(
+    "/{token}",
+    response_model=SessionPhotoListResponse,
+    dependencies=[Depends(rate_limit_public)],
+)
 def list_session_photos(token: str, request: Request) -> SessionPhotoListResponse:
     """List verified photos inside the customer session's assigned subfolder."""
     photo_root_dir, photo_subfolder, min_mtime = _load_session_photo_context(request, token)
@@ -60,7 +60,7 @@ def list_session_photos(token: str, request: Request) -> SessionPhotoListRespons
     return SessionPhotoListResponse(subfolder=photo_subfolder, photos=photos)
 
 
-@router.get("/{token}/{filename}/thumb")
+@router.get("/{token}/{filename}/thumb", dependencies=[Depends(rate_limit_media)])
 def get_photo_thumbnail(token: str, filename: str, request: Request) -> FileResponse:
     """Serve a cached WebP thumbnail (max 480px) for a session photo."""
     photo_root_dir, photo_subfolder, min_mtime = _load_session_photo_context(request, token)
@@ -80,11 +80,11 @@ def get_photo_thumbnail(token: str, filename: str, request: Request) -> FileResp
     return FileResponse(
         path=cache_path,
         media_type="image/webp",
-        headers={"Cache-Control": "private, max-age=300"},
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 
-@router.get("/{token}/{filename}/preview")
+@router.get("/{token}/{filename}/preview", dependencies=[Depends(rate_limit_media)])
 def get_photo_preview(token: str, filename: str, request: Request) -> FileResponse:
     """Serve a cached WebP medium preview (max 1200px) for a session photo."""
     photo_root_dir, photo_subfolder, min_mtime = _load_session_photo_context(request, token)
@@ -104,5 +104,5 @@ def get_photo_preview(token: str, filename: str, request: Request) -> FileRespon
     return FileResponse(
         path=cache_path,
         media_type="image/webp",
-        headers={"Cache-Control": "private, max-age=300"},
+        headers={"Cache-Control": "private, max-age=3600"},
     )

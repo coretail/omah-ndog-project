@@ -6,6 +6,7 @@ import secrets
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -105,6 +106,7 @@ class PhotoScannerService:
             raise ValueError("max_concurrency must be at least 1")
         self._thumbnails_dir = thumbnails_dir
         self._stability_delay_sec = max(0.0, stability_delay_sec)
+        self._max_concurrency = max_concurrency
         self._semaphore = threading.BoundedSemaphore(max_concurrency)
         self._cache_lock = threading.Lock()
         self._metadata_cache: OrderedDict[tuple[str, int, int], tuple[int, int]] = OrderedDict()
@@ -204,6 +206,7 @@ class PhotoScannerService:
             if self._stability_delay_sec > 0:
                 time.sleep(self._stability_delay_sec)
 
+            stable_items: list[tuple[str, Path, os.stat_result]] = []
             for filename, resolved, st1 in pending:
                 try:
                     st2 = resolved.stat()
@@ -211,8 +214,23 @@ class PhotoScannerService:
                     continue
                 if st2.st_size != st1.st_size or st2.st_mtime_ns != st1.st_mtime_ns:
                     continue
+                stable_items.append((filename, resolved, st2))
 
-                dims = self._verify_and_read_dimensions(resolved)
+            if len(stable_items) > 1:
+                workers = min(self._max_concurrency, len(stable_items))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    dims_list = list(
+                        pool.map(
+                            lambda item: self._verify_and_read_dimensions(item[1]),
+                            stable_items,
+                        )
+                    )
+            elif len(stable_items) == 1:
+                dims_list = [self._verify_and_read_dimensions(stable_items[0][1])]
+            else:
+                dims_list = []
+
+            for (filename, resolved, st2), dims in zip(stable_items, dims_list, strict=True):
                 if dims is None:
                     continue
 

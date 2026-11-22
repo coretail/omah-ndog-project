@@ -40,6 +40,7 @@ def _setup_studio_with_session(
     subfolder: str = "sesi-01",
     filter_after_created_at: bool = False,
     rate_limit_requests: int = 60,
+    media_rate_limit_requests: int = 600,
     stability_delay_sec: float = 0.0,
 ) -> tuple[object, AppConfig, Path, str]:
     pin_code = "482910"
@@ -47,6 +48,7 @@ def _setup_studio_with_session(
         data_dir=tmp_path / "data",
         admin_initial_pin=pin_code,
         rate_limit_requests=rate_limit_requests,
+        media_rate_limit_requests=media_rate_limit_requests,
         photo_stability_delay_sec=stability_delay_sec,
     )
     app = create_app(cfg)
@@ -180,6 +182,7 @@ def test_photo_exif_orientation_and_webp_thumb_preview(tmp_path: Path) -> None:
         thumb_resp = client.get(photos[0]["thumb_url"])
         assert thumb_resp.status_code == 200
         assert thumb_resp.headers["content-type"] == "image/webp"
+        assert thumb_resp.headers["cache-control"] == "private, max-age=3600"
         assert "etag" in thumb_resp.headers
         assert len(thumb_resp.content) < 100_000
         with Image.open(io.BytesIO(thumb_resp.content)) as thumb_img:
@@ -189,6 +192,7 @@ def test_photo_exif_orientation_and_webp_thumb_preview(tmp_path: Path) -> None:
         preview_resp = client.get(photos[0]["preview_url"])
         assert preview_resp.status_code == 200
         assert preview_resp.headers["content-type"] == "image/webp"
+        assert preview_resp.headers["cache-control"] == "private, max-age=3600"
         with Image.open(io.BytesIO(preview_resp.content)) as prev_img:
             assert prev_img.format == "WEBP"
             assert prev_img.size == (675, 1200)
@@ -241,17 +245,27 @@ def test_photo_session_invalidation_rate_limit_and_semaphore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, cfg, photo_root, token = _setup_studio_with_session(
-        tmp_path, rate_limit_requests=3
+        tmp_path, rate_limit_requests=3, media_rate_limit_requests=10
     )
     (photo_root / "sesi-01" / "p1.jpg").write_bytes(_make_jpeg_bytes())
 
     with TestClient(app, client=("192.168.1.44", 50000)) as lan_client:
-        assert lan_client.get(f"/api/photos/{token}").status_code == 200
-        assert lan_client.get(f"/api/photos/{token}/p1.jpg/thumb").status_code == 200
-        assert lan_client.get(f"/api/photos/{token}").status_code == 200
+        # Media requests use separate higher-capacity bucket and do not exhaust polling quota
+        for _ in range(5):
+            assert lan_client.get(f"/api/photos/{token}/p1.jpg/thumb").status_code == 200
+
+        for _ in range(3):
+            assert lan_client.get(f"/api/photos/{token}").status_code == 200
         blocked = lan_client.get(f"/api/photos/{token}")
         assert blocked.status_code == 429
         assert "Retry-After" in blocked.headers
+
+        # Exceed media bucket (10 allowed, 11th -> 429)
+        for _ in range(5):
+            assert lan_client.get(f"/api/photos/{token}/p1.jpg/thumb").status_code == 200
+        media_blocked = lan_client.get(f"/api/photos/{token}/p1.jpg/thumb")
+        assert media_blocked.status_code == 429
+        assert "Retry-After" in media_blocked.headers
 
     # Completed session is rejected with 410 on photo endpoints
     with TestClient(app, client=("127.0.0.1", 50000)) as local_client:
