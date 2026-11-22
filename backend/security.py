@@ -7,7 +7,7 @@ import math
 import secrets
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, status
@@ -106,7 +106,7 @@ def require_lan_no_tunnel(request: Request) -> str:
         if header in request.headers:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access is blocked through external tunnels.",
+                detail="Access is blocked through external tunnels.",
             )
 
     for header in _FORWARDED_HEADERS:
@@ -116,7 +116,7 @@ def require_lan_no_tunnel(request: Request) -> str:
             if not hops or not all(is_lan_or_loopback_ip(hop) for hop in hops):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Admin access is blocked through public proxies.",
+                    detail="Access is blocked through public proxies.",
                 )
 
     config = get_app_config(request)
@@ -124,7 +124,7 @@ def require_lan_no_tunnel(request: Request) -> str:
     if not is_lan_or_loopback_ip(client_ip, allow_testclient=config.testing):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access is restricted to localhost or studio LAN.",
+            detail="Access is restricted to localhost or studio LAN.",
         )
     return client_ip
 
@@ -149,14 +149,22 @@ def require_localhost_only(request: Request) -> str:
 
 
 class PinLockoutTracker:
-    """Thread-safe per-IP failed PIN attempt tracker with timed lockout."""
+    """Thread-safe per-IP failed PIN attempt tracker with atomic slot reservation."""
 
     def __init__(self, max_attempts: int = 5, lockout_seconds: int = 900) -> None:
         self._max_attempts = max_attempts
         self._lockout_seconds = lockout_seconds
         self._lock = threading.Lock()
         self._failures: dict[str, int] = {}
+        self._in_flight: dict[str, int] = {}
         self._locked_until: dict[str, float] = {}
+
+    def _decrement_in_flight_locked(self, ip: str) -> None:
+        in_flight = self._in_flight.get(ip, 0)
+        if in_flight <= 1:
+            self._in_flight.pop(ip, None)
+        else:
+            self._in_flight[ip] = in_flight - 1
 
     def check_locked(self, ip: str) -> int:
         """Return remaining lockout seconds for IP, or 0 if not locked."""
@@ -171,10 +179,36 @@ class PinLockoutTracker:
                 return 0
             return max(1, int(math.ceil(until - now)))
 
-    def record_failure(self, ip: str) -> tuple[int, int]:
+    def try_acquire(self, ip: str) -> tuple[bool, int]:
+        """Atomically check lockout/quota and reserve one verification slot for IP."""
+        now = time.monotonic()
+        with self._lock:
+            until = self._locked_until.get(ip)
+            if until is not None:
+                if now < until:
+                    return False, max(1, int(math.ceil(until - now)))
+                self._locked_until.pop(ip, None)
+                self._failures.pop(ip, None)
+
+            used = self._failures.get(ip, 0) + self._in_flight.get(ip, 0)
+            if used >= self._max_attempts:
+                return False, self._lockout_seconds
+
+            self._in_flight[ip] = self._in_flight.get(ip, 0) + 1
+            return True, 0
+
+    def release_acquired(self, ip: str) -> None:
+        """Release a previously acquired verification slot when verification did not run."""
+        with self._lock:
+            self._decrement_in_flight_locked(ip)
+
+    def record_failure(self, ip: str, *, from_acquired: bool = False) -> tuple[int, int]:
         """Record a failed attempt. Returns (remaining_attempts, lockout_seconds)."""
         now = time.monotonic()
         with self._lock:
+            if from_acquired:
+                self._decrement_in_flight_locked(ip)
+
             until = self._locked_until.get(ip)
             if until is not None and now < until:
                 return 0, max(1, int(math.ceil(until - now)))
@@ -183,12 +217,22 @@ class PinLockoutTracker:
                 self._failures.pop(ip, None)
 
             attempts = self._failures.get(ip, 0) + 1
-            self._failures[ip] = attempts
             if attempts >= self._max_attempts:
                 self._locked_until[ip] = now + self._lockout_seconds
-                self._failures[ip] = 0
+                self._failures.pop(ip, None)
                 return 0, self._lockout_seconds
-            return self._max_attempts - attempts, 0
+
+            self._failures[ip] = attempts
+            remaining = max(0, self._max_attempts - attempts - self._in_flight.get(ip, 0))
+            return remaining, 0
+
+    def record_success(self, ip: str, *, from_acquired: bool = False) -> None:
+        """Release acquired slot and clear failure/lockout state on successful authentication."""
+        with self._lock:
+            if from_acquired:
+                self._decrement_in_flight_locked(ip)
+            self._failures.pop(ip, None)
+            self._locked_until.pop(ip, None)
 
     def reset(self, ip: str) -> None:
         """Clear failure counter and lockout state on successful authentication."""
@@ -280,42 +324,91 @@ def require_admin_auth(request: Request) -> str:
 
 
 class SlidingWindowRateLimiter:
-    """Thread-safe sliding window rate limiter keyed by client IP."""
+    """Thread-safe bounded sliding window rate limiter keyed by client IP."""
 
-    def __init__(self, max_requests: int = 60, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        max_requests: int = 60,
+        window_seconds: int = 60,
+        max_keys: int = 10_000,
+    ) -> None:
+        if max_keys < 1:
+            raise ValueError("max_keys must be at least 1")
         self._max_requests = max_requests
         self._window_seconds = window_seconds
+        self._max_keys = max_keys
         self._lock = threading.Lock()
-        self._buckets: dict[str, deque[float]] = {}
+        self._buckets: OrderedDict[str, deque[float]] = OrderedDict()
+
+    @property
+    def active_key_count(self) -> int:
+        """Return number of tracked keys currently retained in memory."""
+        with self._lock:
+            return len(self._buckets)
 
     def check(self, key: str) -> tuple[bool, int]:
         """Check and record one request for key. Returns (allowed, retry_after_seconds)."""
         now = time.monotonic()
         cutoff = now - self._window_seconds
         with self._lock:
+            while self._buckets:
+                oldest_key, oldest_bucket = next(iter(self._buckets.items()))
+                if not oldest_bucket or oldest_bucket[-1] <= cutoff:
+                    self._buckets.pop(oldest_key)
+                else:
+                    break
+
             bucket = self._buckets.get(key)
+            if bucket is not None:
+                while bucket and bucket[0] <= cutoff:
+                    bucket.popleft()
+                if not bucket:
+                    del self._buckets[key]
+                    bucket = None
+
             if bucket is None:
-                bucket = deque()
-                self._buckets[key] = bucket
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+                while len(self._buckets) >= self._max_keys:
+                    self._buckets.popitem(last=False)
+                self._buckets[key] = deque([now])
+                return True, 0
+
             if len(bucket) >= self._max_requests:
                 retry_after = max(1, int(math.ceil(bucket[0] + self._window_seconds - now)))
                 return False, retry_after
+
             bucket.append(now)
+            self._buckets.move_to_end(key)
             return True, 0
+
+
+def resolve_rate_limit_key(request: Request) -> str:
+    """Resolve client IP for rate limiting, trusting proxy headers only from loopback."""
+    config = get_app_config(request)
+    client_ip = get_client_ip(request)
+
+    if is_loopback_ip(client_ip, allow_testclient=config.testing):
+        cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+        if cf_ip:
+            parsed_cf = _parse_ip(cf_ip)
+            if parsed_cf is not None:
+                return str(parsed_cf)
+
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            first_hop = xff.split(",", 1)[0].strip()
+            parsed_xff = _parse_ip(first_hop)
+            if parsed_xff is not None:
+                return str(parsed_xff)
+
+    parsed_client = _parse_ip(client_ip)
+    if parsed_client is not None:
+        return str(parsed_client)
+    return client_ip or "unknown"
 
 
 def rate_limit_public(request: Request) -> None:
     """FastAPI dependency applying per-IP rate limiting to public customer endpoints."""
-    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-    if cf_ip:
-        client_key = cf_ip
-    else:
-        xff = request.headers.get("x-forwarded-for", "")
-        first_hop = xff.split(",", 1)[0].strip() if xff else ""
-        client_key = first_hop or get_client_ip(request) or "unknown"
-
+    client_key = resolve_rate_limit_key(request)
     limiter: SlidingWindowRateLimiter = request.app.state.public_rate_limiter
     allowed, retry_after = limiter.check(client_key)
     if not allowed:

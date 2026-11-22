@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -114,7 +113,7 @@ def _build_settings_response(settings: dict[str, str], lan_ip: str) -> SettingsR
 
 
 @router.get("/auth/status", response_model=AdminAuthStatusResponse)
-async def get_auth_status(request: Request) -> AdminAuthStatusResponse:
+def get_auth_status(request: Request) -> AdminAuthStatusResponse:
     """Return whether admin PIN is configured, current session validity, and lockout status."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
@@ -139,7 +138,7 @@ async def get_auth_status(request: Request) -> AdminAuthStatusResponse:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_localhost_only)],
 )
-async def setup_initial_pin(
+def setup_initial_pin(
     payload: PinSetupRequest,
     request: Request,
 ) -> AdminLoginResponse:
@@ -161,51 +160,59 @@ async def setup_initial_pin(
 
 
 @router.post("/auth/login", response_model=AdminLoginResponse)
-async def login_admin(payload: PinLoginRequest, request: Request) -> AdminLoginResponse:
-    """Authenticate admin using PIN with per-IP brute-force lockout."""
+def login_admin(payload: PinLoginRequest, request: Request) -> AdminLoginResponse:
+    """Authenticate admin using PIN with atomic per-IP brute-force lockout."""
     config = get_app_config(request)
     client_ip = get_client_ip(request)
     lockout: PinLockoutTracker = request.app.state.pin_lockout
 
-    locked_seconds = lockout.check_locked(client_ip)
-    if locked_seconds > 0:
+    acquired, locked_seconds = lockout.try_acquire(client_ip)
+    if not acquired:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Too many failed PIN attempts. Try again in {locked_seconds} seconds.",
             headers={"Retry-After": str(locked_seconds)},
         )
 
-    with db_session(config.db_path) as conn:
-        stored_hash = get_setting(conn, "admin_pin_hash")
-        stored_salt = get_setting(conn, "admin_pin_salt")
+    settled = False
+    try:
+        with db_session(config.db_path) as conn:
+            stored_hash = get_setting(conn, "admin_pin_hash")
+            stored_salt = get_setting(conn, "admin_pin_salt")
 
-    if not stored_hash or not stored_salt:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Admin PIN has not been configured yet. Setup from localhost first.",
-        )
-
-    if not verify_pin(payload.pin, stored_hash, stored_salt):
-        remaining, locked_now = lockout.record_failure(client_ip)
-        if locked_now > 0:
+        if not stored_hash or not stored_salt:
             raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too many failed PIN attempts. Locked for {locked_now} seconds.",
-                headers={"Retry-After": str(locked_now)},
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin PIN has not been configured yet. Setup from localhost first.",
             )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid PIN. {remaining} attempt(s) remaining.",
-        )
 
-    lockout.reset(client_ip)
+        if not verify_pin(payload.pin, stored_hash, stored_salt):
+            remaining, locked_now = lockout.record_failure(client_ip, from_acquired=True)
+            settled = True
+            if locked_now > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Too many failed PIN attempts. Locked for {locked_now} seconds.",
+                    headers={"Retry-After": str(locked_now)},
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid PIN. {remaining} attempt(s) remaining.",
+            )
+
+        lockout.record_success(client_ip, from_acquired=True)
+        settled = True
+    finally:
+        if not settled:
+            lockout.release_acquired(client_ip)
+
     store: AdminSessionStore = request.app.state.admin_sessions
     session_value, expires_at = store.issue(config.admin_token_ttl_hours)
     return AdminLoginResponse(token=session_value, expires_at=expires_at.isoformat())
 
 
 @router.post("/auth/logout")
-async def logout_admin(
+def logout_admin(
     request: Request,
     admin_session: str = Depends(require_admin_auth),
 ) -> dict[str, str]:
@@ -216,7 +223,7 @@ async def logout_admin(
 
 
 @router.post("/auth/change-pin", response_model=AdminLoginResponse)
-async def change_admin_pin(
+def change_admin_pin(
     payload: PinChangeRequest,
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
@@ -242,7 +249,7 @@ async def change_admin_pin(
 
 
 @router.get("/settings", response_model=SettingsResponse)
-async def get_settings(
+def get_settings(
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
 ) -> SettingsResponse:
@@ -250,12 +257,12 @@ async def get_settings(
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
         settings = get_all_settings(conn)
-    lan_ip = await asyncio.to_thread(detect_lan_ip)
+    lan_ip = detect_lan_ip()
     return _build_settings_response(settings, lan_ip)
 
 
 @router.put("/settings", response_model=SettingsResponse)
-async def update_settings(
+def update_settings(
     payload: SettingsUpdateRequest,
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
@@ -264,9 +271,7 @@ async def update_settings(
     config = get_app_config(request)
     validated_root_dir: str | None = None
     if payload.photo_root_dir is not None:
-        validated_root_dir = await asyncio.to_thread(
-            validate_readable_directory, payload.photo_root_dir
-        )
+        validated_root_dir = validate_readable_directory(payload.photo_root_dir)
 
     with db_session(config.db_path) as conn:
         if validated_root_dir is not None:
@@ -291,7 +296,7 @@ async def update_settings(
             set_setting(conn, "session_ttl_hours", str(payload.session_ttl_hours))
         settings = get_all_settings(conn)
 
-    lan_ip = await asyncio.to_thread(detect_lan_ip)
+    lan_ip = detect_lan_ip()
     return _build_settings_response(settings, lan_ip)
 
 
@@ -300,9 +305,9 @@ async def update_settings(
     response_model=BrowseFolderResponse,
     dependencies=[Depends(require_localhost_only)],
 )
-async def browse_folder(
+def browse_folder(
     _admin_session: str = Depends(require_admin_auth),
 ) -> BrowseFolderResponse:
     """Open native folder picker dialog on the studio PC (localhost-only)."""
-    selected = await asyncio.to_thread(open_native_folder_dialog)
+    selected = open_native_folder_dialog()
     return BrowseFolderResponse(path=selected)
