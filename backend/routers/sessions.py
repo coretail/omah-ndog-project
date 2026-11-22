@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import secrets
 import sqlite3
@@ -16,7 +15,7 @@ from backend.schemas import (
     SessionPublicInfoResponse,
     SessionResponse,
 )
-from backend.security import get_app_config, rate_limit_public
+from backend.security import get_app_config, rate_limit_public, require_lan_no_tunnel
 from backend.services.qr_service import build_qr_target_url, generate_qr_png_bytes
 
 router = APIRouter(
@@ -99,12 +98,17 @@ def _load_active_session(conn: sqlite3.Connection, token: str) -> sqlite3.Row:
     return row
 
 
-@router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def create_session(
+@router.post(
+    "",
+    response_model=SessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_lan_no_tunnel)],
+)
+def create_session(
     payload: SessionCreateRequest,
     request: Request,
 ) -> SessionResponse:
-    """Register a new customer session and generate a high-entropy QR token."""
+    """Register a new customer session on kiosk/LAN and generate a high-entropy QR token."""
     config = get_app_config(request)
     now_utc = datetime.now(timezone.utc)
 
@@ -117,8 +121,7 @@ async def create_session(
         active_subfolder = settings.get("active_subfolder", "")
         folder_mode = settings.get("folder_mode", "active")
 
-        photo_subfolder = await asyncio.to_thread(
-            _resolve_subfolder_for_session,
+        photo_subfolder = _resolve_subfolder_for_session(
             photo_root_dir,
             active_subfolder,
             folder_mode,
@@ -151,9 +154,7 @@ async def create_session(
         )
         session_id = int(cursor.lastrowid or 0)
 
-    qr_target_url, qr_mode = await asyncio.to_thread(
-        build_qr_target_url, session_token, public_base_url, config.port
-    )
+    qr_target_url, qr_mode = build_qr_target_url(session_token, public_base_url, config.port)
 
     return SessionResponse(
         id=session_id,
@@ -171,7 +172,7 @@ async def create_session(
 
 
 @router.get("/{token}", response_model=SessionPublicInfoResponse)
-async def get_session(token: str, request: Request) -> SessionPublicInfoResponse:
+def get_session(token: str, request: Request) -> SessionPublicInfoResponse:
     """Validate and retrieve public metadata for an active customer session."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
@@ -187,17 +188,15 @@ async def get_session(token: str, request: Request) -> SessionPublicInfoResponse
 
 
 @router.get("/{token}/qr")
-async def get_session_qr(token: str, request: Request) -> Response:
+def get_session_qr(token: str, request: Request) -> Response:
     """Render PNG QR code pointing to the active session URL."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
         _load_active_session(conn, token)
         public_base_url = get_setting(conn, "public_base_url")
 
-    target_url, _ = await asyncio.to_thread(
-        build_qr_target_url, token, public_base_url, config.port
-    )
-    png_bytes = await asyncio.to_thread(generate_qr_png_bytes, target_url)
+    target_url, _ = build_qr_target_url(token, public_base_url, config.port)
+    png_bytes = generate_qr_png_bytes(target_url)
     return Response(
         content=png_bytes,
         media_type="image/png",
@@ -206,7 +205,7 @@ async def get_session_qr(token: str, request: Request) -> Response:
 
 
 @router.post("/{token}/complete", response_model=SessionCompleteResponse)
-async def complete_session(token: str, request: Request) -> SessionCompleteResponse:
+def complete_session(token: str, request: Request) -> SessionCompleteResponse:
     """Mark an active session as completed, invalidating further QR access."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:

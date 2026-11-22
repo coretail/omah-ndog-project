@@ -1,3 +1,5 @@
+"""FastAPI entrypoint factory. Run with: uvicorn backend.main:create_app --factory --port 8000."""
+
 from __future__ import annotations
 
 from fastapi import FastAPI
@@ -25,19 +27,17 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     application.state.public_rate_limiter = SlidingWindowRateLimiter(
         max_requests=cfg.rate_limit_requests,
         window_seconds=cfg.rate_limit_window_seconds,
+        max_keys=cfg.rate_limit_max_keys,
     )
 
     application.include_router(admin.router)
     application.include_router(sessions.router)
 
     @application.get("/api/health", response_model=HealthResponse, tags=["system"])
-    async def health_check() -> HealthResponse:
+    def health_check() -> HealthResponse:
         with db_session(cfg.db_path) as conn:
             row = conn.execute("PRAGMA journal_mode;").fetchone()
             journal_mode = str(row[0]).lower() if row else "unknown"
         return HealthResponse(status="ok", database_journal_mode=journal_mode)
 
     return application
-
-
-app = create_app()

@@ -7,11 +7,14 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from backend import main as backend_main
+from backend import security as security_module
 from backend.config import AppConfig
 from backend.database import db_session
 from backend.main import create_app
 from backend.routers import admin as admin_router
 from backend.schemas import validate_selected_photos_json, validate_slots_json
+from backend.security import SlidingWindowRateLimiter
 
 
 def _make_app(
@@ -249,9 +252,9 @@ def test_browse_folder_localhost_only_and_settings_validation(
         assert data["session_ttl_hours"] == 6
 
 
-def test_sessions_qr_expiry_completion_and_rate_limit(tmp_path: Path) -> None:
+def test_sessions_qr_expiry_completion_and_tunnel_url(tmp_path: Path) -> None:
     initial_code = "640281"
-    app, cfg = _make_app(tmp_path, initial_pin=initial_code, rate_limit_requests=10)
+    app, cfg = _make_app(tmp_path, initial_pin=initial_code, rate_limit_requests=20)
     photo_root = tmp_path / "photos"
     photo_root.mkdir()
 
@@ -311,7 +314,7 @@ def test_sessions_qr_expiry_completion_and_rate_limit(tmp_path: Path) -> None:
         assert client.get(f"/api/sessions/{session_token}").status_code == 410
         assert client.get(f"/api/sessions/{session_token}/qr").status_code == 410
 
-    # Test expiry + tunnel public_base_url + rate limit using a different client IP
+    # Test expiry + tunnel public_base_url using a LAN client
     with TestClient(app, client=("192.168.1.88", 50000)) as lan_client:
         tok = lan_client.post("/api/admin/auth/login", json={"pin": initial_code}).json()["token"]
         lan_client.put(
@@ -342,6 +345,137 @@ def test_sessions_qr_expiry_completion_and_rate_limit(tmp_path: Path) -> None:
 
         assert lan_client.get(f"/api/sessions/{t2}").status_code == 410
 
-        # Exceed rate limit (limit=10 on this IP)
-        statuses = [lan_client.get(f"/api/sessions/{t2}").status_code for _ in range(10)]
-        assert 429 in statuses
+
+def test_rate_limit_exact_n_plus_one(tmp_path: Path) -> None:
+    app, _ = _make_app(tmp_path, rate_limit_requests=3)
+    with TestClient(app, client=("127.0.0.1", 50000)) as local_client:
+        reg = local_client.post(
+            "/api/sessions",
+            json={
+                "name": "Dina",
+                "whatsapp": "081234567890",
+                "email": "dina@example.com",
+                "consent_accepted": True,
+            },
+        )
+        assert reg.status_code == 201
+        token = reg.json()["token"]
+
+    with TestClient(app, client=("192.168.1.90", 50000)) as lan_client:
+        for _ in range(3):
+            assert lan_client.get(f"/api/sessions/{token}").status_code == 200
+        blocked = lan_client.get(f"/api/sessions/{token}")
+        assert blocked.status_code == 429
+        assert "Retry-After" in blocked.headers
+
+
+def test_rate_limit_ignores_spoofed_headers_from_non_loopback(tmp_path: Path) -> None:
+    app, _ = _make_app(tmp_path, rate_limit_requests=3)
+    with TestClient(app, client=("127.0.0.1", 50000)) as local_client:
+        reg = local_client.post(
+            "/api/sessions",
+            json={
+                "name": "Eko",
+                "whatsapp": "081234567891",
+                "email": "eko@example.com",
+                "consent_accepted": True,
+            },
+        )
+        assert reg.status_code == 201
+        token = reg.json()["token"]
+
+    # Non-loopback client cannot bypass rate limit by spoofing CF-Connecting-IP / X-Forwarded-For
+    with TestClient(app, client=("192.168.1.99", 50000)) as spoof_client:
+        spoof_headers = [
+            {"CF-Connecting-IP": "203.0.113.1"},
+            {"CF-Connecting-IP": "203.0.113.2"},
+            {"X-Forwarded-For": "203.0.113.3"},
+        ]
+        for hdr in spoof_headers:
+            assert spoof_client.get(f"/api/sessions/{token}", headers=hdr).status_code == 200
+        assert (
+            spoof_client.get(
+                f"/api/sessions/{token}", headers={"CF-Connecting-IP": "203.0.113.4"}
+            ).status_code
+            == 429
+        )
+
+    # Loopback client (local cloudflared) uses CF-Connecting-IP for per-visitor buckets
+    with TestClient(app, client=("127.0.0.1", 50000)) as tunnel_proxy:
+        visitor_one = {"CF-Connecting-IP": "198.51.100.10"}
+        visitor_two = {"CF-Connecting-IP": "198.51.100.20"}
+        for _ in range(3):
+            assert tunnel_proxy.get(f"/api/sessions/{token}", headers=visitor_one).status_code == 200
+        assert tunnel_proxy.get(f"/api/sessions/{token}", headers=visitor_one).status_code == 429
+        assert tunnel_proxy.get(f"/api/sessions/{token}", headers=visitor_two).status_code == 200
+
+
+def test_rate_limiter_prunes_expired_and_caps_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(security_module.time, "monotonic", lambda: clock[0])
+
+    limiter = SlidingWindowRateLimiter(max_requests=2, window_seconds=10, max_keys=3)
+    assert limiter.check("ip-1") == (True, 0)
+    assert limiter.check("ip-2") == (True, 0)
+    assert limiter.check("ip-3") == (True, 0)
+    assert limiter.active_key_count == 3
+
+    # Adding a 4th distinct key within window evicts oldest key to stay capped at max_keys=3
+    clock[0] = 101.0
+    assert limiter.check("ip-4") == (True, 0)
+    assert limiter.active_key_count == 3
+
+    # Once window elapses, all prior expired keys are pruned automatically
+    clock[0] = 112.0
+    assert limiter.check("ip-5") == (True, 0)
+    assert limiter.active_key_count == 1
+
+
+def test_session_registration_blocked_via_tunnel_and_public_ip(tmp_path: Path) -> None:
+    app, _ = _make_app(tmp_path)
+    payload = {
+        "name": "Fajar",
+        "whatsapp": "081234567892",
+        "email": "fajar@example.com",
+        "consent_accepted": True,
+    }
+
+    with TestClient(app, client=("203.0.113.10", 50000)) as public_client:
+        assert public_client.post("/api/sessions", json=payload).status_code == 403
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as local_client:
+        assert (
+            local_client.post(
+                "/api/sessions", json=payload, headers={"CF-Connecting-IP": "198.51.100.5"}
+            ).status_code
+            == 403
+        )
+        assert (
+            local_client.post(
+                "/api/sessions", json=payload, headers={"True-Client-IP": "198.51.100.5"}
+            ).status_code
+            == 403
+        )
+        assert (
+            local_client.post(
+                "/api/sessions", json=payload, headers={"X-Forwarded-For": "203.0.113.10"}
+            ).status_code
+            == 403
+        )
+
+        created = local_client.post("/api/sessions", json=payload)
+        assert created.status_code == 201
+        token = created.json()["token"]
+
+        # Customer reading session via tunnel (loopback proxy + CF-Connecting-IP) succeeds
+        assert (
+            local_client.get(
+                f"/api/sessions/{token}", headers={"CF-Connecting-IP": "198.51.100.5"}
+            ).status_code
+            == 200
+        )
+
+
+def test_main_module_has_no_import_time_app() -> None:
+    assert not hasattr(backend_main, "app")
+    assert callable(backend_main.create_app)

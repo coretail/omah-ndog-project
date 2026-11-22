@@ -7,7 +7,7 @@ import math
 import secrets
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, status
@@ -106,7 +106,7 @@ def require_lan_no_tunnel(request: Request) -> str:
         if header in request.headers:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Admin access is blocked through external tunnels.",
+                detail="Access is blocked through external tunnels.",
             )
 
     for header in _FORWARDED_HEADERS:
@@ -116,7 +116,7 @@ def require_lan_no_tunnel(request: Request) -> str:
             if not hops or not all(is_lan_or_loopback_ip(hop) for hop in hops):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Admin access is blocked through public proxies.",
+                    detail="Access is blocked through public proxies.",
                 )
 
     config = get_app_config(request)
@@ -124,7 +124,7 @@ def require_lan_no_tunnel(request: Request) -> str:
     if not is_lan_or_loopback_ip(client_ip, allow_testclient=config.testing):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access is restricted to localhost or studio LAN.",
+            detail="Access is restricted to localhost or studio LAN.",
         )
     return client_ip
 
@@ -280,42 +280,91 @@ def require_admin_auth(request: Request) -> str:
 
 
 class SlidingWindowRateLimiter:
-    """Thread-safe sliding window rate limiter keyed by client IP."""
+    """Thread-safe bounded sliding window rate limiter keyed by client IP."""
 
-    def __init__(self, max_requests: int = 60, window_seconds: int = 60) -> None:
+    def __init__(
+        self,
+        max_requests: int = 60,
+        window_seconds: int = 60,
+        max_keys: int = 10_000,
+    ) -> None:
+        if max_keys < 1:
+            raise ValueError("max_keys must be at least 1")
         self._max_requests = max_requests
         self._window_seconds = window_seconds
+        self._max_keys = max_keys
         self._lock = threading.Lock()
-        self._buckets: dict[str, deque[float]] = {}
+        self._buckets: OrderedDict[str, deque[float]] = OrderedDict()
+
+    @property
+    def active_key_count(self) -> int:
+        """Return number of tracked keys currently retained in memory."""
+        with self._lock:
+            return len(self._buckets)
 
     def check(self, key: str) -> tuple[bool, int]:
         """Check and record one request for key. Returns (allowed, retry_after_seconds)."""
         now = time.monotonic()
         cutoff = now - self._window_seconds
         with self._lock:
+            while self._buckets:
+                oldest_key, oldest_bucket = next(iter(self._buckets.items()))
+                if not oldest_bucket or oldest_bucket[-1] <= cutoff:
+                    self._buckets.pop(oldest_key)
+                else:
+                    break
+
             bucket = self._buckets.get(key)
+            if bucket is not None:
+                while bucket and bucket[0] <= cutoff:
+                    bucket.popleft()
+                if not bucket:
+                    del self._buckets[key]
+                    bucket = None
+
             if bucket is None:
-                bucket = deque()
-                self._buckets[key] = bucket
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
+                while len(self._buckets) >= self._max_keys:
+                    self._buckets.popitem(last=False)
+                self._buckets[key] = deque([now])
+                return True, 0
+
             if len(bucket) >= self._max_requests:
                 retry_after = max(1, int(math.ceil(bucket[0] + self._window_seconds - now)))
                 return False, retry_after
+
             bucket.append(now)
+            self._buckets.move_to_end(key)
             return True, 0
+
+
+def resolve_rate_limit_key(request: Request) -> str:
+    """Resolve client IP for rate limiting, trusting proxy headers only from loopback."""
+    config = get_app_config(request)
+    client_ip = get_client_ip(request)
+
+    if is_loopback_ip(client_ip, allow_testclient=config.testing):
+        cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+        if cf_ip:
+            parsed_cf = _parse_ip(cf_ip)
+            if parsed_cf is not None:
+                return str(parsed_cf)
+
+        xff = request.headers.get("x-forwarded-for", "")
+        if xff:
+            first_hop = xff.split(",", 1)[0].strip()
+            parsed_xff = _parse_ip(first_hop)
+            if parsed_xff is not None:
+                return str(parsed_xff)
+
+    parsed_client = _parse_ip(client_ip)
+    if parsed_client is not None:
+        return str(parsed_client)
+    return client_ip or "unknown"
 
 
 def rate_limit_public(request: Request) -> None:
     """FastAPI dependency applying per-IP rate limiting to public customer endpoints."""
-    cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-    if cf_ip:
-        client_key = cf_ip
-    else:
-        xff = request.headers.get("x-forwarded-for", "")
-        first_hop = xff.split(",", 1)[0].strip() if xff else ""
-        client_key = first_hop or get_client_ip(request) or "unknown"
-
+    client_key = resolve_rate_limit_key(request)
     limiter: SlidingWindowRateLimiter = request.app.state.public_rate_limiter
     allowed, retry_after = limiter.check(client_key)
     if not allowed:

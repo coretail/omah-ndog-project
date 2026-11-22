@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -114,7 +113,7 @@ def _build_settings_response(settings: dict[str, str], lan_ip: str) -> SettingsR
 
 
 @router.get("/auth/status", response_model=AdminAuthStatusResponse)
-async def get_auth_status(request: Request) -> AdminAuthStatusResponse:
+def get_auth_status(request: Request) -> AdminAuthStatusResponse:
     """Return whether admin PIN is configured, current session validity, and lockout status."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
@@ -139,7 +138,7 @@ async def get_auth_status(request: Request) -> AdminAuthStatusResponse:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_localhost_only)],
 )
-async def setup_initial_pin(
+def setup_initial_pin(
     payload: PinSetupRequest,
     request: Request,
 ) -> AdminLoginResponse:
@@ -161,7 +160,7 @@ async def setup_initial_pin(
 
 
 @router.post("/auth/login", response_model=AdminLoginResponse)
-async def login_admin(payload: PinLoginRequest, request: Request) -> AdminLoginResponse:
+def login_admin(payload: PinLoginRequest, request: Request) -> AdminLoginResponse:
     """Authenticate admin using PIN with per-IP brute-force lockout."""
     config = get_app_config(request)
     client_ip = get_client_ip(request)
@@ -205,7 +204,7 @@ async def login_admin(payload: PinLoginRequest, request: Request) -> AdminLoginR
 
 
 @router.post("/auth/logout")
-async def logout_admin(
+def logout_admin(
     request: Request,
     admin_session: str = Depends(require_admin_auth),
 ) -> dict[str, str]:
@@ -216,7 +215,7 @@ async def logout_admin(
 
 
 @router.post("/auth/change-pin", response_model=AdminLoginResponse)
-async def change_admin_pin(
+def change_admin_pin(
     payload: PinChangeRequest,
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
@@ -242,7 +241,7 @@ async def change_admin_pin(
 
 
 @router.get("/settings", response_model=SettingsResponse)
-async def get_settings(
+def get_settings(
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
 ) -> SettingsResponse:
@@ -250,12 +249,12 @@ async def get_settings(
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
         settings = get_all_settings(conn)
-    lan_ip = await asyncio.to_thread(detect_lan_ip)
+    lan_ip = detect_lan_ip()
     return _build_settings_response(settings, lan_ip)
 
 
 @router.put("/settings", response_model=SettingsResponse)
-async def update_settings(
+def update_settings(
     payload: SettingsUpdateRequest,
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
@@ -264,9 +263,7 @@ async def update_settings(
     config = get_app_config(request)
     validated_root_dir: str | None = None
     if payload.photo_root_dir is not None:
-        validated_root_dir = await asyncio.to_thread(
-            validate_readable_directory, payload.photo_root_dir
-        )
+        validated_root_dir = validate_readable_directory(payload.photo_root_dir)
 
     with db_session(config.db_path) as conn:
         if validated_root_dir is not None:
@@ -291,7 +288,7 @@ async def update_settings(
             set_setting(conn, "session_ttl_hours", str(payload.session_ttl_hours))
         settings = get_all_settings(conn)
 
-    lan_ip = await asyncio.to_thread(detect_lan_ip)
+    lan_ip = detect_lan_ip()
     return _build_settings_response(settings, lan_ip)
 
 
@@ -300,9 +297,9 @@ async def update_settings(
     response_model=BrowseFolderResponse,
     dependencies=[Depends(require_localhost_only)],
 )
-async def browse_folder(
+def browse_folder(
     _admin_session: str = Depends(require_admin_auth),
 ) -> BrowseFolderResponse:
     """Open native folder picker dialog on the studio PC (localhost-only)."""
-    selected = await asyncio.to_thread(open_native_folder_dialog)
+    selected = open_native_folder_dialog()
     return BrowseFolderResponse(path=selected)
