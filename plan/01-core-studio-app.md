@@ -210,7 +210,7 @@ F:\omah-ndog-project\
     - Pastikan tidak ada blocking call (Pillow / `win32print`) di handler `async def`.
     - Pastikan `/api/admin/*` dan `/api/prints/queue*` terblokir dari header tunnel.
     - Pastikan `.gitignore` mengecualikan `data/` dan file sensitif lokal.
-  - [x] Uji otomatis menyeluruh (`pytest` Fase 1–6 & Playwright E2E: offline/mocked print, multi-perangkat bersamaan, retry/cancel cetak gagal, cleanup retensi, dan hapus data customer).
+  - [x] Uji otomatis menyeluruh (`pytest` Fase 1–6 & Playwright E2E Fase 4–6: retensi & cleanup manual/setting korup, histori customer `printed`-only & paginasi >500, export CSV lengkap + sanitasi formula, hapus data customer + guard `409` & keamanan foto kamera, auth `401`, tunnel `403`, kolaborasi desktop+mobile, mode LAN/public URL, serta retry/cancel cetak gagal).
   - [ ] Uji manual operasional di PC studio (`start_studio.bat`, mode offline LAN HP nyata, public URL Cloudflare Named Tunnel, dan cetak fisik / `Microsoft Print to PDF`).
 - File terdampak: `backend/services/cleanup_service.py`, `backend/routers/admin.py`, `backend/tests/test_phase6_hardening_cleanup.py`, `frontend/src/pages/AdminDashboard.tsx`, `start_studio.bat`, `.gitignore`
 - Kriteria selesai:
