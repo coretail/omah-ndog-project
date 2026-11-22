@@ -161,43 +161,51 @@ def setup_initial_pin(
 
 @router.post("/auth/login", response_model=AdminLoginResponse)
 def login_admin(payload: PinLoginRequest, request: Request) -> AdminLoginResponse:
-    """Authenticate admin using PIN with per-IP brute-force lockout."""
+    """Authenticate admin using PIN with atomic per-IP brute-force lockout."""
     config = get_app_config(request)
     client_ip = get_client_ip(request)
     lockout: PinLockoutTracker = request.app.state.pin_lockout
 
-    locked_seconds = lockout.check_locked(client_ip)
-    if locked_seconds > 0:
+    acquired, locked_seconds = lockout.try_acquire(client_ip)
+    if not acquired:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Too many failed PIN attempts. Try again in {locked_seconds} seconds.",
             headers={"Retry-After": str(locked_seconds)},
         )
 
-    with db_session(config.db_path) as conn:
-        stored_hash = get_setting(conn, "admin_pin_hash")
-        stored_salt = get_setting(conn, "admin_pin_salt")
+    settled = False
+    try:
+        with db_session(config.db_path) as conn:
+            stored_hash = get_setting(conn, "admin_pin_hash")
+            stored_salt = get_setting(conn, "admin_pin_salt")
 
-    if not stored_hash or not stored_salt:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Admin PIN has not been configured yet. Setup from localhost first.",
-        )
-
-    if not verify_pin(payload.pin, stored_hash, stored_salt):
-        remaining, locked_now = lockout.record_failure(client_ip)
-        if locked_now > 0:
+        if not stored_hash or not stored_salt:
             raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too many failed PIN attempts. Locked for {locked_now} seconds.",
-                headers={"Retry-After": str(locked_now)},
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin PIN has not been configured yet. Setup from localhost first.",
             )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid PIN. {remaining} attempt(s) remaining.",
-        )
 
-    lockout.reset(client_ip)
+        if not verify_pin(payload.pin, stored_hash, stored_salt):
+            remaining, locked_now = lockout.record_failure(client_ip, from_acquired=True)
+            settled = True
+            if locked_now > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Too many failed PIN attempts. Locked for {locked_now} seconds.",
+                    headers={"Retry-After": str(locked_now)},
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid PIN. {remaining} attempt(s) remaining.",
+            )
+
+        lockout.record_success(client_ip, from_acquired=True)
+        settled = True
+    finally:
+        if not settled:
+            lockout.release_acquired(client_ip)
+
     store: AdminSessionStore = request.app.state.admin_sessions
     session_value, expires_at = store.issue(config.admin_token_ttl_hours)
     return AdminLoginResponse(token=session_value, expires_at=expires_at.isoformat())

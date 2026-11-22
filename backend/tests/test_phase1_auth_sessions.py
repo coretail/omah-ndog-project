@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -479,3 +481,85 @@ def test_session_registration_blocked_via_tunnel_and_public_ip(tmp_path: Path) -
 def test_main_module_has_no_import_time_app() -> None:
     assert not hasattr(backend_main, "app")
     assert callable(backend_main.create_app)
+
+
+def test_admin_pin_lockout_blocks_parallel_brute_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    correct_code = "482910"
+    app, _ = _make_app(tmp_path, initial_pin=correct_code, pin_max_attempts=5)
+
+    real_verify = admin_router.verify_pin
+    verify_lock = threading.Lock()
+    verify_calls = [0]
+
+    def tracked_verify(pin: str, stored_hash: str, stored_salt: str) -> bool:
+        with verify_lock:
+            verify_calls[0] += 1
+        return real_verify(pin, stored_hash, stored_salt)
+
+    monkeypatch.setattr(admin_router, "verify_pin", tracked_verify)
+
+    total_workers = 40
+    barrier = threading.Barrier(total_workers)
+
+    def attempt(idx: int) -> int:
+        with TestClient(app, client=("192.168.1.55", 50000)) as client:
+            barrier.wait(timeout=10)
+            resp = client.post("/api/admin/auth/login", json={"pin": f"{idx:06d}"})
+            return resp.status_code
+
+    with ThreadPoolExecutor(max_workers=total_workers) as executor:
+        statuses = list(executor.map(attempt, range(total_workers)))
+
+    assert verify_calls[0] == 5
+    assert statuses.count(200) == 0
+    assert statuses.count(401) == 4
+    assert statuses.count(429) == 36
+    assert app.state.pin_lockout.check_locked("192.168.1.55") > 0
+
+
+def test_admin_pin_lockout_rejects_correct_pin_when_five_attempts_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    correct_code = "482910"
+    app, _ = _make_app(tmp_path, initial_pin=correct_code, pin_max_attempts=5)
+
+    real_verify = admin_router.verify_pin
+    state_lock = threading.Lock()
+    entered = [0]
+    all_five_entered = threading.Event()
+    release_verify = threading.Event()
+
+    def gated_verify(pin: str, stored_hash: str, stored_salt: str) -> bool:
+        with state_lock:
+            entered[0] += 1
+            if entered[0] == 5:
+                all_five_entered.set()
+        assert release_verify.wait(timeout=10)
+        return real_verify(pin, stored_hash, stored_salt)
+
+    monkeypatch.setattr(admin_router, "verify_pin", gated_verify)
+
+    def send_wrong() -> int:
+        with TestClient(app, client=("192.168.1.56", 50000)) as client:
+            return client.post("/api/admin/auth/login", json={"pin": "000000"}).status_code
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(send_wrong) for _ in range(5)]
+        assert all_five_entered.wait(timeout=10)
+
+        with TestClient(app, client=("192.168.1.56", 50000)) as attacker:
+            sixth = attacker.post("/api/admin/auth/login", json={"pin": correct_code})
+            assert sixth.status_code == 429
+            assert "Retry-After" in sixth.headers
+            assert entered[0] == 5
+
+        release_verify.set()
+        results = [f.result() for f in futures]
+
+    assert results.count(200) == 0
+    assert results.count(401) == 4
+    assert results.count(429) == 1
+    assert entered[0] == 5
+    assert app.state.pin_lockout.check_locked("192.168.1.56") > 0

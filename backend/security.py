@@ -149,14 +149,22 @@ def require_localhost_only(request: Request) -> str:
 
 
 class PinLockoutTracker:
-    """Thread-safe per-IP failed PIN attempt tracker with timed lockout."""
+    """Thread-safe per-IP failed PIN attempt tracker with atomic slot reservation."""
 
     def __init__(self, max_attempts: int = 5, lockout_seconds: int = 900) -> None:
         self._max_attempts = max_attempts
         self._lockout_seconds = lockout_seconds
         self._lock = threading.Lock()
         self._failures: dict[str, int] = {}
+        self._in_flight: dict[str, int] = {}
         self._locked_until: dict[str, float] = {}
+
+    def _decrement_in_flight_locked(self, ip: str) -> None:
+        in_flight = self._in_flight.get(ip, 0)
+        if in_flight <= 1:
+            self._in_flight.pop(ip, None)
+        else:
+            self._in_flight[ip] = in_flight - 1
 
     def check_locked(self, ip: str) -> int:
         """Return remaining lockout seconds for IP, or 0 if not locked."""
@@ -171,10 +179,36 @@ class PinLockoutTracker:
                 return 0
             return max(1, int(math.ceil(until - now)))
 
-    def record_failure(self, ip: str) -> tuple[int, int]:
+    def try_acquire(self, ip: str) -> tuple[bool, int]:
+        """Atomically check lockout/quota and reserve one verification slot for IP."""
+        now = time.monotonic()
+        with self._lock:
+            until = self._locked_until.get(ip)
+            if until is not None:
+                if now < until:
+                    return False, max(1, int(math.ceil(until - now)))
+                self._locked_until.pop(ip, None)
+                self._failures.pop(ip, None)
+
+            used = self._failures.get(ip, 0) + self._in_flight.get(ip, 0)
+            if used >= self._max_attempts:
+                return False, self._lockout_seconds
+
+            self._in_flight[ip] = self._in_flight.get(ip, 0) + 1
+            return True, 0
+
+    def release_acquired(self, ip: str) -> None:
+        """Release a previously acquired verification slot when verification did not run."""
+        with self._lock:
+            self._decrement_in_flight_locked(ip)
+
+    def record_failure(self, ip: str, *, from_acquired: bool = False) -> tuple[int, int]:
         """Record a failed attempt. Returns (remaining_attempts, lockout_seconds)."""
         now = time.monotonic()
         with self._lock:
+            if from_acquired:
+                self._decrement_in_flight_locked(ip)
+
             until = self._locked_until.get(ip)
             if until is not None and now < until:
                 return 0, max(1, int(math.ceil(until - now)))
@@ -183,12 +217,22 @@ class PinLockoutTracker:
                 self._failures.pop(ip, None)
 
             attempts = self._failures.get(ip, 0) + 1
-            self._failures[ip] = attempts
             if attempts >= self._max_attempts:
                 self._locked_until[ip] = now + self._lockout_seconds
-                self._failures[ip] = 0
+                self._failures.pop(ip, None)
                 return 0, self._lockout_seconds
-            return self._max_attempts - attempts, 0
+
+            self._failures[ip] = attempts
+            remaining = max(0, self._max_attempts - attempts - self._in_flight.get(ip, 0))
+            return remaining, 0
+
+    def record_success(self, ip: str, *, from_acquired: bool = False) -> None:
+        """Release acquired slot and clear failure/lockout state on successful authentication."""
+        with self._lock:
+            if from_acquired:
+                self._decrement_in_flight_locked(ip)
+            self._failures.pop(ip, None)
+            self._locked_until.pop(ip, None)
 
     def reset(self, ip: str) -> None:
         """Clear failure counter and lockout state on successful authentication."""
