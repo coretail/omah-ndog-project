@@ -1,5 +1,5 @@
 # Core Self-Photo Studio App
-Status: draft
+Status: berjalan
 Tujuan: Membangun aplikasi pemilihan Frame dan Foto untuk self-photo studio (PC Kiosk + Mobile via QR Code) dengan Admin Dashboard manajemen frame/slot/folder, compositing 300 DPI, dan sistem printing Windows (Auto-Print / Manual Print Queue).
 
 ---
@@ -82,17 +82,17 @@ F:\omah-ndog-project\
 ## Fase 1: Fondasi Backend, Database, & Auth
 - Tujuan: Menyiapkan struktur proyek backend FastAPI, database SQLite dengan WAL mode, validasi Pydantic, mekanisme autentikasi Admin PIN (dengan lockout & proteksi tunnel), serta manajemen settings dasar dan sesi customer.
 - Tugas:
-  - [ ] Buat `requirements.txt` (FastAPI, Uvicorn, Pydantic, Pillow, qrcode, python-multipart, pytest, httpx, pywin32 opsional Windows) dan catat alasan tiap dependency di `catatan\`.
-  - [ ] Implementasi `backend/config.py` dan `backend/database.py`: koneksi SQLite dengan `PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`, `PRAGMA busy_timeout=5000`, serta inisialisasi tabel & seed kategori default (`4R`, `5R`, `Polaroid`, `News Paper`).
-  - [ ] Implementasi `backend/schemas.py`: seluruh request/response schema Pydantic termasuk validator ketat untuk `slots_json` (persentase `0..100`, persegi axis-aligned) dan `selected_photos_json` (nama file tanpa path separator, offset/zoom dalam batas aman).
-  - [ ] Implementasi `backend/security.py`:
+  - [x] Buat `requirements.txt` (FastAPI, Uvicorn, Pydantic, Pillow, qrcode, python-multipart, pytest, httpx, pywin32 opsional Windows) dan catat alasan tiap dependency di `catatan\`.
+  - [x] Implementasi `backend/config.py` dan `backend/database.py`: koneksi SQLite dengan `PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`, `PRAGMA busy_timeout=5000`, serta inisialisasi tabel & seed kategori default (`4R`, `5R`, `Polaroid`, `News Paper`).
+  - [x] Implementasi `backend/schemas.py`: seluruh request/response schema Pydantic termasuk validator ketat untuk `slots_json` (persentase `0..100`, persegi axis-aligned) dan `selected_photos_json` (nama file tanpa path separator, offset/zoom dalam batas aman).
+  - [x] Implementasi `backend/security.py`:
     - Middleware/dependency guard `/api/admin/*` khusus `localhost`/LAN dan menolak request dengan header tunnel (`CF-Connecting-IP`, `True-Client-IP`, `X-Forwarded-For` non-LAN).
     - Guard `localhost`-only khusus endpoint Browse Folder.
     - Hashing PIN Admin (`pbkdf2_hmac` + salt acak, tanpa PIN hardcoded; dukung first-run setup PIN di localhost atau env `ADMIN_INITIAL_PIN`), penerbitan session token Admin (`secrets.token_urlsafe(32)`), dan lockout setelah 5 kali PIN salah (lockout 15 menit).
     - Rate limiter berbasis IP untuk endpoint publik customer (`/api/sessions/*`, `/api/photos/*`).
-  - [ ] Implementasi `backend/routers/admin.py` (bagian auth & settings: status setup PIN, login/logout, ubah PIN, get/update settings termasuk `public_base_url`, `retention_days`, `session_ttl_hours`, dan endpoint localhost-only native Browse Folder + validasi path manual eksis & readable).
-  - [ ] Implementasi `backend/routers/sessions.py` & `backend/services/qr_service.py`: registrasi customer (validasi `consent_accepted=true`), generate token `secrets.token_urlsafe(32)` dengan `expires_at`, invalidasi saat `completed`, dan generate gambar QR PNG dengan fallback IP LAN saat `public_base_url` kosong.
-  - [ ] Implementasi `backend/main.py` untuk menyatukan router dan health check `/api/health`.
+  - [x] Implementasi `backend/routers/admin.py` (bagian auth & settings: status setup PIN, login/logout, ubah PIN, get/update settings termasuk `public_base_url`, `retention_days`, `session_ttl_hours`, dan endpoint localhost-only native Browse Folder + validasi path manual eksis & readable).
+  - [x] Implementasi `backend/routers/sessions.py` & `backend/services/qr_service.py`: registrasi customer (validasi `consent_accepted=true`), generate token `secrets.token_urlsafe(32)` dengan `expires_at`, invalidasi saat `completed`, dan generate gambar QR PNG dengan fallback IP LAN saat `public_base_url` kosong.
+  - [x] Implementasi `backend/main.py` untuk menyatukan router dan health check `/api/health`.
 - File terdampak: `requirements.txt`, `backend/main.py`, `backend/config.py`, `backend/database.py`, `backend/schemas.py`, `backend/security.py`, `backend/routers/admin.py`, `backend/routers/sessions.py`, `backend/services/qr_service.py`, `backend/tests/test_phase1_auth_sessions.py`
 - Kriteria selesai:
   - Server FastAPI jalan bersih di `localhost:8000` dan tabel SQLite terbuat dalam mode `WAL`.
