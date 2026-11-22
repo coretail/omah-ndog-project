@@ -132,13 +132,13 @@ F:\omah-ndog-project\
 ## Fase 3: Foto — Scanner Subfolder & Thumbnail Cache
 - Tujuan: Membangun layanan pembacaan foto dari subfolder sesi yang aman terhadap path-traversal, tahan terhadap file yang belum selesai disalin dari kamera, serta menghasilkan thumbnail WebP ringan untuk HP.
 - Tugas:
-  - [ ] Implementasi `backend/services/photo_scanner.py`:
+  - [x] Implementasi `backend/services/photo_scanner.py`:
     - Validasi ketat menggunakan `Path.resolve()` agar akses foto selalu berada di dalam `photo_root_dir / session.photo_subfolder` (tolak `..`, symlink keluar root, atau nama file berseparator).
     - Filter ekstensi gambar yang didukung (`.jpg`, `.jpeg`, `.png`, `.webp`).
     - Deteksi file belum selesai disalin: cek stabilitas `st_size` & `st_mtime` (dua pembacaan berjeda singkat) lalu validasi header/struktur gambar via `Image.verify()` di threadpool; file yang belum siap dilewati sementara tanpa error.
     - Dukungan filter waktu opsional (`mtime >= session.created_at`) jika subfolder digunakan ulang oleh lebih dari satu customer.
     - Generasi & caching thumbnail WebP (`max 480px`, EXIF auto-orient via `ImageOps.exif_transpose`) dan medium preview (`max 1200px`) di `data/thumbnails/` melalui threadpool agar tidak memblokir event loop.
-  - [ ] Implementasi `backend/routers/photos.py`:
+  - [x] Implementasi `backend/routers/photos.py`:
     - Endpoint admin: list subfolder di dalam dedicated folder (beserta jumlah foto & penanda apakah subfolder sudah pernah dipakai sesi sebelumnya) + buat subfolder baru.
     - Endpoint customer (terproteksi token sesi valid + rate limit): list daftar foto sesi, ambil thumbnail WebP, dan ambil medium preview.
 - File terdampak: `backend/services/photo_scanner.py`, `backend/routers/photos.py`, `backend/tests/test_phase3_photos.py`

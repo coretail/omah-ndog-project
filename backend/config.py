@@ -32,6 +32,8 @@ class AppConfig:
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
     rate_limit_max_keys: int = 10_000
+    photo_stability_delay_sec: float = 0.25
+    thumbnail_max_concurrency: int = 4
     testing: bool = False
 
     @property

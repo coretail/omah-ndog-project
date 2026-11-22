@@ -30,6 +30,7 @@ from backend.security import (
     require_localhost_only,
     verify_pin,
 )
+from backend.services.photo_scanner import SUPPORTED_IMAGE_EXTENSIONS
 from backend.services.qr_service import detect_lan_ip
 
 router = APIRouter(
@@ -315,9 +316,6 @@ def browse_folder(
     return BrowseFolderResponse(path=selected)
 
 
-_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-
-
 @router.get("/subfolders", response_model=list[SubfolderInfoResponse])
 def list_subfolders(
     request: Request,
@@ -360,7 +358,7 @@ def list_subfolders(
             photo_count = sum(
                 1
                 for item in resolved_entry.iterdir()
-                if item.is_file() and item.suffix.lower() in _IMAGE_EXTENSIONS
+                if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
             )
         except OSError:
             photo_count = 0
@@ -409,7 +407,9 @@ def create_subfolder(
 
     target.mkdir(parents=True, exist_ok=True)
     photo_count = sum(
-        1 for item in target.iterdir() if item.is_file() and item.suffix.lower() in _IMAGE_EXTENSIONS
+        1
+        for item in target.iterdir()
+        if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
     )
     used_count = int(usage_row["cnt"]) if usage_row else 0
     return SubfolderInfoResponse(

@@ -390,3 +390,18 @@ class SubfolderCreateRequest(BaseModel):
     @classmethod
     def _clean_subfolder_name(cls, value: str) -> str:
         return _validate_clean_filename(value.strip())
+
+
+class PhotoItemResponse(BaseModel):
+    filename: str
+    width: int
+    height: int
+    size_bytes: int
+    modified_at: str
+    thumb_url: str
+    preview_url: str
+
+
+class SessionPhotoListResponse(BaseModel):
+    subfolder: str
+    photos: list[PhotoItemResponse]
