@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import os
 import sqlite3
 from pathlib import Path
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
-from backend.database import db_session, get_all_settings, get_setting, set_setting
+from backend.database import db_immediate_session, db_session, get_all_settings, get_setting, set_setting
 from backend.schemas import (
     AdminAuthStatusResponse,
     AdminLoginResponse,
@@ -16,6 +18,7 @@ from backend.schemas import (
     CleanupRunResponse,
     CustomerDeleteResponse,
     CustomerHistoryItemResponse,
+    CustomerHistoryListResponse,
     PinChangeRequest,
     PinLoginRequest,
     PinSetupRequest,
@@ -36,9 +39,15 @@ from backend.security import (
     require_localhost_only,
     verify_pin,
 )
-from backend.services.cleanup_service import delete_session_outputs, run_retention_cleanup
+from backend.services.cleanup_service import (
+    delete_session_outputs,
+    get_retention_days,
+    run_retention_cleanup,
+)
 from backend.services.photo_scanner import SUPPORTED_IMAGE_EXTENSIONS
 from backend.services.qr_service import detect_lan_ip
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/admin",
@@ -112,7 +121,7 @@ def _build_settings_response(settings: dict[str, str], lan_ip: str) -> SettingsR
     return SettingsResponse(
         photo_root_dir=settings.get("photo_root_dir", ""),
         active_subfolder=settings.get("active_subfolder", ""),
-        folder_mode=folder_mode,  # type: ignore[arg-type]
+        folder_mode=cast(Literal["active", "auto_create"], folder_mode),
         filter_photos_after_registration=(
             settings.get("filter_photos_after_registration", "false").lower() == "true"
         ),
@@ -436,17 +445,24 @@ def create_subfolder(
 
 
 def _sanitize_csv_cell(value: str) -> str:
-    """Neutralize spreadsheet formula injection characters (=, +, -, @, tab, CR)."""
-    if value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+    """Neutralize spreadsheet formula injection characters including leading whitespace prefixes."""
+    if not value:
+        return value
+    stripped = value.lstrip(" \t\r\n")
+    if value[0] in ("=", "+", "-", "@", "\t", "\r") or (
+        stripped and stripped[0] in ("=", "+", "-", "@")
+    ):
         return f"'{value}"
     return value
 
 
 def _query_customer_history(
-    conn: sqlite3.Connection, limit: int
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[CustomerHistoryItemResponse]:
-    rows = conn.execute(
-        """
+    base_sql = """
         SELECT
             cs.id,
             cs.name,
@@ -458,17 +474,19 @@ def _query_customer_history(
             cs.expires_at,
             COUNT(pj.id) AS job_count,
             COALESCE(
-                SUM(CASE WHEN pj.status != 'cancelled' THEN pj.total_price ELSE 0 END),
+                SUM(CASE WHEN pj.status = 'printed' THEN pj.total_price ELSE 0 END),
                 0
             ) AS total_spent
         FROM customer_sessions cs
         LEFT JOIN print_jobs pj ON pj.session_id = cs.id
         GROUP BY cs.id
         ORDER BY cs.id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    """
+    if limit is not None:
+        rows = conn.execute(f"{base_sql} LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+    else:
+        rows = conn.execute(base_sql).fetchall()
+
     return [
         CustomerHistoryItemResponse(
             id=int(r["id"]),
@@ -476,7 +494,7 @@ def _query_customer_history(
             whatsapp=str(r["whatsapp"]),
             email=str(r["email"]),
             photo_subfolder=str(r["photo_subfolder"]),
-            status=str(r["status"]),  # type: ignore[arg-type]
+            status=cast(Literal["active", "completed"], str(r["status"])),
             job_count=int(r["job_count"]),
             total_spent=int(r["total_spent"]),
             created_at=str(r["created_at"]),
@@ -494,7 +512,7 @@ def trigger_retention_cleanup(
     """Manually run retention cleanup for cached thumbnails and rendered 300 DPI outputs."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
-        retention_days = max(1, int(get_setting(conn, "retention_days", "7") or "7"))
+        retention_days = get_retention_days(conn)
 
     result = run_retention_cleanup(
         config.thumbnails_dir,
@@ -509,28 +527,31 @@ def trigger_retention_cleanup(
     )
 
 
-@router.get("/customers", response_model=list[CustomerHistoryItemResponse])
+@router.get("/customers", response_model=CustomerHistoryListResponse)
 def list_customers(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     _admin_session: str = Depends(require_admin_auth),
-) -> list[CustomerHistoryItemResponse]:
-    """List customer sessions along with print job counts and total spent."""
+) -> CustomerHistoryListResponse:
+    """List customer sessions along with print job counts and printed totals."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
-        return _query_customer_history(conn, limit)
+        total_row = conn.execute("SELECT COUNT(*) AS cnt FROM customer_sessions").fetchone()
+        total = int(total_row["cnt"]) if total_row is not None else 0
+        items = _query_customer_history(conn, limit=limit, offset=offset)
+    return CustomerHistoryListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/customers/export.csv")
 def export_customers_csv(
     request: Request,
-    limit: int = Query(default=500, ge=1, le=2000),
     _admin_session: str = Depends(require_admin_auth),
 ) -> Response:
-    """Export customer history and totals as UTF-8 CSV with formula-injection protection."""
+    """Export all customer history and printed totals as UTF-8 CSV without truncation."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
-        items = _query_customer_history(conn, limit)
+        items = _query_customer_history(conn, limit=None)
 
     buf = io.StringIO()
     buf.write("\ufeff")
@@ -544,7 +565,7 @@ def export_customers_csv(
             "Subfolder",
             "Status",
             "Job Count",
-            "Total Price (Rp)",
+            "Total Tercetak (Rp)",
             "Created At",
             "Expires At",
         ]
@@ -581,9 +602,9 @@ def delete_customer_data(
     request: Request,
     _admin_session: str = Depends(require_admin_auth),
 ) -> CustomerDeleteResponse:
-    """Delete a customer session, its print jobs, and rendered outputs (never camera photos)."""
+    """Atomically delete a customer session, its print jobs, and rendered outputs (never camera photos)."""
     config = get_app_config(request)
-    with db_session(config.db_path) as conn:
+    with db_immediate_session(config.db_path) as conn:
         existing = conn.execute(
             "SELECT id FROM customer_sessions WHERE id = ?",
             (session_id,),
@@ -601,7 +622,19 @@ def delete_customer_data(
                 detail="Cannot delete customer data while a print job is actively printing.",
             )
 
+        jobs_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM print_jobs WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        deleted_jobs = int(jobs_row["cnt"]) if jobs_row is not None else 0
+
         conn.execute("DELETE FROM customer_sessions WHERE id = ?", (session_id,))
 
     deleted_outputs = delete_session_outputs(config.outputs_dir, session_id)
+    logger.info(
+        "Deleted customer session_id=%d (jobs=%d, deleted_outputs=%d)",
+        session_id,
+        deleted_jobs,
+        deleted_outputs,
+    )
     return CustomerDeleteResponse(status="deleted", deleted_outputs=deleted_outputs)

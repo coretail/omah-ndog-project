@@ -16,7 +16,7 @@ import {
   fetchAuthenticatedBlob,
   printsApi,
 } from "../api/client";
-import { formatRupiah } from "../utils/draftStorage";
+import { formatRupiah } from "../utils/format";
 
 interface PrintQueuePanelProps {
   settings: StudioSettings | null;

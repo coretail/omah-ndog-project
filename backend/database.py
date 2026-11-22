@@ -117,6 +117,24 @@ def db_session(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+@contextmanager
+def db_immediate_session(db_path: Path) -> Iterator[sqlite3.Connection]:
+    """Context manager yielding a SQLite connection inside an atomic BEGIN IMMEDIATE transaction."""
+    conn = get_connection(db_path)
+    conn.isolation_level = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        yield conn
+        if conn.in_transaction:
+            conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
 def init_db(db_path: Path, admin_initial_pin: str | None = None) -> None:
     """Initialize SQLite schema, default settings, seed categories, and optional initial PIN."""
     db_path.parent.mkdir(parents=True, exist_ok=True)

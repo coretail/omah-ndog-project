@@ -1,5 +1,5 @@
 # Core Self-Photo Studio App
-Status: selesai
+Status: berjalan
 Tujuan: Membangun aplikasi pemilihan Frame dan Foto untuk self-photo studio (PC Kiosk + Mobile via QR Code) dengan Admin Dashboard manajemen frame/slot/folder, compositing 300 DPI, dan sistem printing Windows (Auto-Print / Manual Print Queue).
 
 ---
@@ -210,7 +210,8 @@ F:\omah-ndog-project\
     - Pastikan tidak ada blocking call (Pillow / `win32print`) di handler `async def`.
     - Pastikan `/api/admin/*` dan `/api/prints/queue*` terblokir dari header tunnel.
     - Pastikan `.gitignore` mengecualikan `data/` dan file sensitif lokal.
-  - [x] Uji end-to-end lengkap: mode offline LAN, mode public URL, multi-perangkat bersamaan, retry cetak gagal, cleanup retensi, dan hapus data customer.
+  - [x] Uji otomatis menyeluruh (`pytest` Fase 1–6 & Playwright E2E: offline/mocked print, multi-perangkat bersamaan, retry/cancel cetak gagal, cleanup retensi, dan hapus data customer).
+  - [ ] Uji manual operasional di PC studio (`start_studio.bat`, mode offline LAN HP nyata, public URL Cloudflare Named Tunnel, dan cetak fisik / `Microsoft Print to PDF`).
 - File terdampak: `backend/services/cleanup_service.py`, `backend/routers/admin.py`, `backend/tests/test_phase6_hardening_cleanup.py`, `frontend/src/pages/AdminDashboard.tsx`, `start_studio.bat`, `.gitignore`
 - Kriteria selesai:
   - Seluruh suite `pytest` dan build `frontend` (`tsc --noEmit && npm run build`) lulus 100%.

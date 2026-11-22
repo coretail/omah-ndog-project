@@ -82,7 +82,3 @@ export function clearDraft(token: string): void {
     // Ignore storage failures
   }
 }
-
-export function formatRupiah(amount: number): string {
-  return `Rp ${amount.toLocaleString("id-ID")}`;
-}

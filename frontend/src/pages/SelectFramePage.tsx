@@ -3,7 +3,8 @@ import { ArrowLeft } from "lucide-react";
 import { ApiError, FrameCategory, FrameItem, framesApi, sessionsApi } from "../api/client";
 import { FrameCompositePreview } from "../components/FrameCompositePreview";
 import { SessionUnavailableView } from "../components/SessionUnavailableView";
-import { formatRupiah, loadDraft, saveDraft } from "../utils/draftStorage";
+import { formatRupiah } from "../utils/format";
+import { loadDraft, saveDraft } from "../utils/draftStorage";
 
 interface SelectFramePageProps {
   token: string;

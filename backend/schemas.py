@@ -493,6 +493,13 @@ class CustomerHistoryItemResponse(BaseModel):
     expires_at: str
 
 
+class CustomerHistoryListResponse(BaseModel):
+    items: list[CustomerHistoryItemResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class CustomerDeleteResponse(BaseModel):
-    status: str
+    status: Literal["deleted"]
     deleted_outputs: int

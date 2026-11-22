@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
@@ -13,6 +15,8 @@ from backend.database import db_session, get_setting
 logger = logging.getLogger(__name__)
 
 DEFAULT_CLEANUP_INTERVAL_SECONDS = 3600
+DEFAULT_RETENTION_DAYS = 7
+_CLEANUP_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -24,8 +28,23 @@ class CleanupResult:
     freed_bytes: int
 
 
+def get_retention_days(conn: sqlite3.Connection) -> int:
+    """Read retention_days safely from settings, clamping to >= 1 with fallback on corrupt values."""
+    raw = get_setting(conn, "retention_days", str(DEFAULT_RETENTION_DAYS))
+    try:
+        parsed = int(raw.strip())
+    except (ValueError, AttributeError):
+        logger.warning(
+            "Invalid retention_days setting %r; falling back to %d",
+            raw,
+            DEFAULT_RETENTION_DAYS,
+        )
+        return DEFAULT_RETENTION_DAYS
+    return max(1, parsed)
+
+
 def _prune_expired_files(root_dir: Path, cutoff_ts: float) -> tuple[int, int]:
-    """Delete files inside root_dir older than cutoff_ts and prune empty subdirectories."""
+    """Delete files older than cutoff_ts and prune only already-expired empty subdirectories."""
     resolved_root = root_dir.resolve()
     if not resolved_root.is_dir():
         return 0, 0
@@ -33,36 +52,52 @@ def _prune_expired_files(root_dir: Path, cutoff_ts: float) -> tuple[int, int]:
     deleted_count = 0
     freed_bytes = 0
 
-    for item in list(resolved_root.rglob("*")):
+    for current_dir, dirnames, filenames in os.walk(resolved_root, topdown=False):
+        current_path = Path(current_dir)
         try:
-            resolved_item = item.resolve()
-            if not resolved_item.is_relative_to(resolved_root) or resolved_item == resolved_root:
-                continue
-            if not resolved_item.is_file():
-                continue
-            st = resolved_item.stat()
-            if st.st_mtime < cutoff_ts:
-                file_size = st.st_size
-                resolved_item.unlink(missing_ok=True)
-                deleted_count += 1
-                freed_bytes += file_size
-        except OSError as exc:
-            logger.debug("Skipping file during cleanup (%s): %s", item, exc)
-
-    # Remove empty subdirectories bottom-up without touching resolved_root itself
-    dirs = sorted(
-        (p for p in resolved_root.rglob("*") if p.is_dir()),
-        key=lambda p: len(p.parts),
-        reverse=True,
-    )
-    for d in dirs:
-        try:
-            resolved_d = d.resolve()
-            if resolved_d.is_relative_to(resolved_root) and resolved_d != resolved_root:
-                if not any(resolved_d.iterdir()):
-                    resolved_d.rmdir()
+            resolved_dir = current_path.resolve()
         except OSError:
-            pass
+            continue
+        if not resolved_dir.is_relative_to(resolved_root):
+            continue
+
+        # Snapshot directory mtime before unlinking files inside it, since unlinking updates mtime.
+        dir_mtime: float | None = None
+        if resolved_dir != resolved_root:
+            try:
+                dir_mtime = resolved_dir.stat().st_mtime
+            except OSError:
+                dir_mtime = None
+
+        for filename in filenames:
+            candidate = current_path / filename
+            try:
+                resolved_file = candidate.resolve()
+                if (
+                    not resolved_file.is_relative_to(resolved_root)
+                    or resolved_file == resolved_root
+                    or not resolved_file.is_file()
+                ):
+                    continue
+                st = resolved_file.stat()
+                if st.st_mtime < cutoff_ts:
+                    file_size = st.st_size
+                    resolved_file.unlink(missing_ok=True)
+                    deleted_count += 1
+                    freed_bytes += file_size
+            except OSError as exc:
+                logger.debug("Skipping file during cleanup (%s): %s", candidate, exc)
+
+        # Remove empty subdirectories only if they were already older than cutoff_ts
+        if resolved_dir != resolved_root and dir_mtime is not None and dir_mtime < cutoff_ts:
+            try:
+                if not any(resolved_dir.iterdir()):
+                    resolved_dir.rmdir()
+            except OSError as exc:
+                logger.debug("Skipping dir removal (%s): %s", resolved_dir, exc)
+
+        # Keep dirnames referenced only for walk clarity; topdown=False already visited them
+        _ = dirnames
 
     return deleted_count, freed_bytes
 
@@ -79,8 +114,9 @@ def run_retention_cleanup(
     ref_ts = now_ts if now_ts is not None else time.time()
     cutoff_ts = ref_ts - effective_days * 86_400
 
-    del_thumbs, freed_thumbs = _prune_expired_files(thumbnails_dir, cutoff_ts)
-    del_outputs, freed_outputs = _prune_expired_files(outputs_dir, cutoff_ts)
+    with _CLEANUP_LOCK:
+        del_thumbs, freed_thumbs = _prune_expired_files(thumbnails_dir, cutoff_ts)
+        del_outputs, freed_outputs = _prune_expired_files(outputs_dir, cutoff_ts)
 
     return CleanupResult(
         deleted_thumbnails=del_thumbs,
@@ -101,9 +137,17 @@ def delete_session_outputs(outputs_dir: Path, session_id: int) -> int:
     if not session_dir.exists():
         return 0
 
-    file_count = sum(1 for item in session_dir.rglob("*") if item.is_file())
-    shutil.rmtree(session_dir, ignore_errors=True)
-    return file_count
+    before_count = sum(1 for item in session_dir.rglob("*") if item.is_file())
+
+    def _on_rm_error(_func: object, path: str, exc_info: object) -> None:
+        logger.warning("Failed to delete session output path %s: %s", path, exc_info)
+
+    shutil.rmtree(session_dir, onerror=_on_rm_error)
+
+    remaining_count = (
+        sum(1 for item in session_dir.rglob("*") if item.is_file()) if session_dir.exists() else 0
+    )
+    return max(0, before_count - remaining_count)
 
 
 class CleanupScheduler:
@@ -122,13 +166,12 @@ class CleanupScheduler:
 
     def run_once(self) -> CleanupResult:
         """Read retention_days from settings and execute one cleanup pass."""
-        retention_days = 7
+        retention_days = DEFAULT_RETENTION_DAYS
         try:
             with db_session(self._config.db_path) as conn:
-                raw_days = get_setting(conn, "retention_days", "7")
-                retention_days = max(1, int(raw_days or "7"))
+                retention_days = get_retention_days(conn)
         except Exception as exc:
-            logger.debug("Fallback to default retention_days=7: %s", exc)
+            logger.debug("Fallback to default retention_days=%d: %s", DEFAULT_RETENTION_DAYS, exc)
 
         return run_retention_cleanup(
             self._config.thumbnails_dir,
@@ -150,11 +193,13 @@ class CleanupScheduler:
 
     def stop(self, timeout: float = 5.0) -> None:
         """Signal the cleanup thread to exit and wait up to timeout seconds."""
-        if self._thread is None:
+        thread = self._thread
+        if thread is None:
             return
         self._stop_event.set()
-        self._thread.join(timeout=timeout)
-        self._thread = None
+        thread.join(timeout=timeout)
+        if not thread.is_alive():
+            self._thread = None
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():

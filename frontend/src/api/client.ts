@@ -81,6 +81,13 @@ export interface CustomerHistoryItem {
   expires_at: string;
 }
 
+export interface CustomerHistoryList {
+  items: CustomerHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface CustomerDeleteResult {
   status: string;
   deleted_outputs: number;
@@ -227,9 +234,9 @@ export const adminApi = {
     );
   },
 
-  listCustomers(limit = 100): Promise<CustomerHistoryItem[]> {
-    return requestJson<CustomerHistoryItem[]>(
-      `/api/admin/customers?limit=${limit}`,
+  listCustomers(limit = 100, offset = 0): Promise<CustomerHistoryList> {
+    return requestJson<CustomerHistoryList>(
+      `/api/admin/customers?limit=${limit}&offset=${offset}`,
       {},
       true
     );
