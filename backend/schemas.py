@@ -288,3 +288,100 @@ class SessionCompleteResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     database_journal_mode: str
+
+
+class FrameCategoryCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=40)
+    price: int = Field(ge=0, le=10_000_000)
+    width_mm: float = Field(gt=0.0, le=1000.0)
+    height_mm: float = Field(gt=0.0, le=1000.0)
+    orientation: Literal["portrait", "landscape"] = "portrait"
+    safe_margin_mm: float = Field(default=0.0, ge=0.0, le=50.0)
+    sort_order: int = Field(default=0, ge=0, le=1000)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_cat_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Category name is required.")
+        return cleaned
+
+
+class FrameCategoryUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=40)
+    price: int | None = Field(default=None, ge=0, le=10_000_000)
+    width_mm: float | None = Field(default=None, gt=0.0, le=1000.0)
+    height_mm: float | None = Field(default=None, gt=0.0, le=1000.0)
+    orientation: Literal["portrait", "landscape"] | None = None
+    safe_margin_mm: float | None = Field(default=None, ge=0.0, le=50.0)
+    sort_order: int | None = Field(default=None, ge=0, le=1000)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_opt_cat_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Category name must not be blank.")
+        return cleaned
+
+
+class FrameCategoryResponse(BaseModel):
+    id: int
+    name: str
+    price: int
+    width_mm: float
+    height_mm: float
+    orientation: Literal["portrait", "landscape"]
+    safe_margin_mm: float
+    sort_order: int
+
+
+class FrameSlotsUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slots: list[FrameSlotSchema]
+
+    @field_validator("slots")
+    @classmethod
+    def _unique_slot_ids(cls, value: list[FrameSlotSchema]) -> list[FrameSlotSchema]:
+        seen: set[str] = set()
+        for slot in value:
+            if slot.id in seen:
+                raise ValueError(f"Duplicate slot id: {slot.id}")
+            seen.add(slot.id)
+        return value
+
+
+class FrameResponse(BaseModel):
+    id: int
+    category_id: int
+    name: str
+    image_url: str
+    canvas_width: int
+    canvas_height: int
+    slots: list[FrameSlotSchema]
+    created_at: str
+
+
+class SubfolderInfoResponse(BaseModel):
+    name: str
+    photo_count: int
+    used_by_sessions: int
+
+
+class SubfolderCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_subfolder_name(cls, value: str) -> str:
+        return _validate_clean_filename(value.strip())

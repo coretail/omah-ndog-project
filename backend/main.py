@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from backend.config import AppConfig
 from backend.database import db_session, init_db
-from backend.routers import admin, sessions
+from backend.routers import admin, frames, sessions
 from backend.schemas import HealthResponse
 from backend.security import AdminSessionStore, PinLockoutTracker, SlidingWindowRateLimiter
 
@@ -31,6 +31,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     )
 
     application.include_router(admin.router)
+    application.include_router(frames.router)
     application.include_router(sessions.router)
 
     @application.get("/api/health", response_model=HealthResponse, tags=["system"])

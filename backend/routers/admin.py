@@ -15,6 +15,8 @@ from backend.schemas import (
     PinSetupRequest,
     SettingsResponse,
     SettingsUpdateRequest,
+    SubfolderCreateRequest,
+    SubfolderInfoResponse,
 )
 from backend.security import (
     AdminSessionStore,
@@ -311,3 +313,107 @@ def browse_folder(
     """Open native folder picker dialog on the studio PC (localhost-only)."""
     selected = open_native_folder_dialog()
     return BrowseFolderResponse(path=selected)
+
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+@router.get("/subfolders", response_model=list[SubfolderInfoResponse])
+def list_subfolders(
+    request: Request,
+    _admin_session: str = Depends(require_admin_auth),
+) -> list[SubfolderInfoResponse]:
+    """List session subfolders inside photo_root_dir along with prior session counts."""
+    config = get_app_config(request)
+    with db_session(config.db_path) as conn:
+        root_str = get_setting(conn, "photo_root_dir")
+        usage_rows = conn.execute(
+            """
+            SELECT photo_subfolder, COUNT(*) AS cnt
+            FROM customer_sessions
+            WHERE photo_subfolder != ''
+            GROUP BY photo_subfolder
+            """
+        ).fetchall()
+
+    if not root_str:
+        return []
+
+    root_resolved = Path(root_str).resolve()
+    if not root_resolved.is_dir():
+        return []
+
+    usage_map = {str(r["photo_subfolder"]): int(r["cnt"]) for r in usage_rows}
+    results: list[SubfolderInfoResponse] = []
+    try:
+        entries = sorted(root_resolved.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return []
+
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        resolved_entry = entry.resolve()
+        if not resolved_entry.is_relative_to(root_resolved):
+            continue
+        try:
+            photo_count = sum(
+                1
+                for item in resolved_entry.iterdir()
+                if item.is_file() and item.suffix.lower() in _IMAGE_EXTENSIONS
+            )
+        except OSError:
+            photo_count = 0
+        results.append(
+            SubfolderInfoResponse(
+                name=entry.name,
+                photo_count=photo_count,
+                used_by_sessions=usage_map.get(entry.name, 0),
+            )
+        )
+    return results
+
+
+@router.post(
+    "/subfolders",
+    response_model=SubfolderInfoResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_subfolder(
+    payload: SubfolderCreateRequest,
+    request: Request,
+    _admin_session: str = Depends(require_admin_auth),
+) -> SubfolderInfoResponse:
+    """Create a new session subfolder inside configured photo_root_dir."""
+    config = get_app_config(request)
+    with db_session(config.db_path) as conn:
+        root_str = get_setting(conn, "photo_root_dir")
+        usage_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM customer_sessions WHERE photo_subfolder = ?",
+            (payload.name,),
+        ).fetchone()
+
+    if not root_str:
+        raise HTTPException(
+            status_code=400,
+            detail="Dedicated photo folder (photo_root_dir) is not configured yet.",
+        )
+
+    root_resolved = Path(root_str).resolve()
+    if not root_resolved.is_dir():
+        raise HTTPException(status_code=400, detail="Configured photo_root_dir is not accessible.")
+
+    target = (root_resolved / payload.name).resolve()
+    if not target.is_relative_to(root_resolved) or target == root_resolved:
+        raise HTTPException(status_code=400, detail="Invalid subfolder name.")
+
+    target.mkdir(parents=True, exist_ok=True)
+    photo_count = sum(
+        1 for item in target.iterdir() if item.is_file() and item.suffix.lower() in _IMAGE_EXTENSIONS
+    )
+    used_count = int(usage_row["cnt"]) if usage_row else 0
+    return SubfolderInfoResponse(
+        name=payload.name,
+        photo_count=photo_count,
+        used_by_sessions=used_count,
+    )

@@ -107,15 +107,15 @@ F:\omah-ndog-project\
 ## Fase 2: Admin Dashboard — Frame & Slot Editor
 - Tujuan: Menyediakan API CRUD kategori & template frame PNG beserta UI Admin Dashboard (`Group 16`) lengkap dengan **Interactive Frame Slot Editor** (tambah slot persegi, drag, resize, lock, undo/redo, simpan dalam persen) serta pengaturan dedicated folder & subfolder sesi.
 - Tugas:
-  - [ ] Implementasi `backend/routers/frames.py`:
+  - [x] Implementasi `backend/routers/frames.py`:
     - CRUD kategori frame (`name`, `price`, `width_mm`, `height_mm`, `orientation`, `safe_margin_mm`).
     - Upload template frame PNG (validasi format gambar & ukuran maksimum, simpan ke `data/frames/`, baca dimensi asli lewat threadpool).
     - Update & validasi `slots_json` (persegi axis-aligned, `xPct, yPct, wPct, hPct`, `locked`) via Pydantic; hapus frame beserta file PNG terkait.
-  - [ ] Inisialisasi proyek `frontend/` (React + Vite + TypeScript strict, font `Poller One` & `Inter`, CSS design tokens sesuai Figma).
-  - [ ] Unduh aset latar Admin Dashboard dari Figma (`BG LP 1`) ke `frontend/public/assets/` menggunakan `curl -L` dan pastikan tidak ada URL Figma temporer di kode.
-  - [ ] Buat `frontend/src/api/client.ts` dan `frontend/src/components/AdminPinModal.tsx` (mendukung alur first-run setup PIN dan login PIN + pesan lockout).
-  - [ ] Buat `frontend/src/components/FrameSlotEditor.tsx`: kanvas overlay frame dengan toolbar `#FE4E12` persis ikon Figma (`PlusSquare`, `Lock`, `CornerDownLeft` undo, `CornerDownRight` redo, `Check` save), drag & resize slot persegi dalam koordinat persen, tombol hapus slot.
-  - [ ] Buat `frontend/src/pages/AdminDashboard.tsx` sesuai desain `Group 16`:
+  - [x] Inisialisasi proyek `frontend/` (React + Vite + TypeScript strict, font `Poller One` & `Inter`, CSS design tokens sesuai Figma).
+  - [x] Unduh aset latar Admin Dashboard dari Figma (`BG LP 1`) ke `frontend/public/assets/` menggunakan `curl -L` dan pastikan tidak ada URL Figma temporer di kode.
+  - [x] Buat `frontend/src/api/client.ts` dan `frontend/src/components/AdminPinModal.tsx` (mendukung alur first-run setup PIN dan login PIN + pesan lockout).
+  - [x] Buat `frontend/src/components/FrameSlotEditor.tsx`: kanvas overlay frame dengan toolbar `#FE4E12` persis ikon Figma (`PlusSquare`, `Lock`, `CornerDownLeft` undo, `CornerDownRight` redo, `Check` save), drag & resize slot persegi dalam koordinat persen, tombol hapus slot.
+  - [x] Buat `frontend/src/pages/AdminDashboard.tsx` sesuai desain `Group 16`:
     - Bagian **Frame Setting**: tab kategori (`#FE4E12`, aktif `#0143A1`, tombol `+` tambah/edit kategori termasuk orientasi & safe margin), `Input Harga`, tombol `+` upload frame, grid frame, dan `FrameSlotEditor` di panel kanan.
     - Bagian **Photo File**: input bar `#FF8D28` + tombol Browse Folder (localhost) + Save + pemilih Subfolder Aktif (dengan peringatan jika subfolder pernah dipakai sesi lain & opsi buat subfolder baru / filter waktu registrasi).
     - Bagian **Pengaturan Tunnel & Sistem**: input `public_base_url` (dengan info perbedaan Named Tunnel vs Quick Tunnel & status IP LAN fallback).
