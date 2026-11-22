@@ -154,15 +154,20 @@ export function FrameSlotEditor({ frame, onSaveSlots, saving }: FrameSlotEditorP
         }
       }
 
+      const rx = clamp(roundPct(nextX), 0, 100 - MIN_SLOT_PCT);
+      const ry = clamp(roundPct(nextY), 0, 100 - MIN_SLOT_PCT);
+      const rw = Math.min(Math.max(MIN_SLOT_PCT, roundPct(nextW)), roundPct(100 - rx));
+      const rh = Math.min(Math.max(MIN_SLOT_PCT, roundPct(nextH)), roundPct(100 - ry));
+
       setSlots((prev) =>
         prev.map((s) =>
           s.id === drag.slotId
             ? {
                 ...s,
-                xPct: roundPct(nextX),
-                yPct: roundPct(nextY),
-                wPct: roundPct(nextW),
-                hPct: roundPct(nextH),
+                xPct: rx,
+                yPct: ry,
+                wPct: rw,
+                hPct: rh,
               }
             : s
         )

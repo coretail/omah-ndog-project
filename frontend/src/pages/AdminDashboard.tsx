@@ -210,6 +210,32 @@ export function AdminDashboard({ onRequireAuth }: AdminDashboardProps) {
     }
   }
 
+  async function handleDeleteActiveCategory() {
+    if (!activeCategory) return;
+    if (
+      !window.confirm(
+        `Hapus kategori "${activeCategory.name}" beserta semua frame di dalamnya?`
+      )
+    ) {
+      return;
+    }
+    try {
+      await framesApi.deleteCategory(activeCategory.id);
+      const remaining = categories.filter((c) => c.id !== activeCategory.id);
+      setCategories(remaining);
+      setSelectedCatId(remaining[0]?.id ?? null);
+      setCatModalMode(null);
+      setFeedback({ type: "ok", text: `Kategori ${activeCategory.name} dihapus.` });
+    } catch (err) {
+      if (!handleAuthFailure(err)) {
+        setFeedback({
+          type: "err",
+          text: err instanceof Error ? err.message : "Gagal menghapus kategori.",
+        });
+      }
+    }
+  }
+
   async function handleUploadFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -231,12 +257,19 @@ export function AdminDashboard({ onRequireAuth }: AdminDashboardProps) {
     }
   }
 
-  async function handleDeleteFrame(frameId: number) {
+  async function handleDeleteFrame(frame: FrameItem) {
+    if (
+      !window.confirm(
+        `Hapus frame "${frame.name}" (${frame.slots.length} slot)? Aksi ini tidak bisa dibatalkan.`
+      )
+    ) {
+      return;
+    }
     try {
-      await framesApi.deleteFrame(frameId);
+      await framesApi.deleteFrame(frame.id);
       setFrames((prev) => {
-        const next = prev.filter((f) => f.id !== frameId);
-        if (selectedFrameId === frameId) {
+        const next = prev.filter((f) => f.id !== frame.id);
+        if (selectedFrameId === frame.id) {
           setSelectedFrameId(next[0]?.id ?? null);
         }
         return next;
@@ -683,7 +716,7 @@ export function AdminDashboard({ onRequireAuth }: AdminDashboardProps) {
                             title="Hapus Frame"
                             onClick={(e) => {
                               e.stopPropagation();
-                              void handleDeleteFrame(frame.id);
+                              void handleDeleteFrame(frame);
                             }}
                             style={{
                               border: "none",
@@ -1070,6 +1103,27 @@ export function AdminDashboard({ onRequireAuth }: AdminDashboardProps) {
             </div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              {catModalMode === "edit" && activeCategory && (
+                <button
+                  type="button"
+                  title="Hapus Kategori"
+                  onClick={() => void handleDeleteActiveCategory()}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 999,
+                    border: "2px solid #dc2626",
+                    backgroundColor: "#fee2e2",
+                    color: "#dc2626",
+                    fontWeight: 700,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Trash2 size={16} />
+                  <span>Hapus</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setCatModalMode(null)}

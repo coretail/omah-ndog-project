@@ -122,6 +122,18 @@ def test_frame_upload_slots_validation_and_delete(tmp_path: Path) -> None:
         )
         assert bad_upload.status_code == 400
 
+        # Reject oversized PNG dimensions (> 8000px per side) without writing file
+        bomb_buf = io.BytesIO()
+        Image.new("1", (8001, 10), 0).save(bomb_buf, format="PNG")
+        oversized_upload = client.post(
+            "/api/frames",
+            data={"category_id": str(cat_id), "name": "Too Big"},
+            files={"file": ("big.png", bomb_buf.getvalue(), "image/png")},
+            headers=headers,
+        )
+        assert oversized_upload.status_code == 400
+        assert list(cfg.frames_dir.glob("*.png")) == []
+
         # Valid PNG upload
         png_bytes = _make_png_bytes(600, 900)
         uploaded = client.post(
@@ -137,11 +149,27 @@ def test_frame_upload_slots_validation_and_delete(tmp_path: Path) -> None:
         assert frame_data["canvas_height"] == 900
         assert frame_data["slots"] == []
 
-        # Image endpoint serves stored PNG
+        # Image endpoint serves stored PNG via FileResponse with caching headers
         img_resp = client.get(frame_data["image_url"])
         assert img_resp.status_code == 200
         assert img_resp.headers["content-type"] == "image/png"
+        assert "etag" in img_resp.headers
+        assert "last-modified" in img_resp.headers
         assert img_resp.content == png_bytes
+
+        # Reject > 32 slots per frame
+        too_many_slots = [
+            {"id": f"s-{i}", "xPct": 0, "yPct": 0, "wPct": 10, "hPct": 10}
+            for i in range(33)
+        ]
+        assert (
+            client.put(
+                f"/api/frames/{frame_id}/slots",
+                json={"slots": too_many_slots},
+                headers=headers,
+            ).status_code
+            == 422
+        )
 
         # Invalid slot bounds (wPct <= 0, xPct + wPct > 100) rejected with 422
         assert (

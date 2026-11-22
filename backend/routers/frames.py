@@ -7,7 +7,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from backend.database import db_session
@@ -24,6 +25,8 @@ from backend.security import get_app_config, rate_limit_public, require_admin_au
 router = APIRouter(prefix="/api/frames", tags=["frames"])
 
 MAX_FRAME_FILE_BYTES = 15 * 1024 * 1024
+MAX_FRAME_DIMENSION = 8000
+MAX_FRAME_PIXELS = MAX_FRAME_DIMENSION * MAX_FRAME_DIMENSION
 
 
 def _row_to_category(row: sqlite3.Row) -> FrameCategoryResponse:
@@ -269,14 +272,22 @@ def upload_frame(
             if img.format != "PNG":
                 raise HTTPException(status_code=400, detail="Only PNG frame templates are supported.")
             canvas_width, canvas_height = img.size
+            if (
+                canvas_width <= 0
+                or canvas_height <= 0
+                or canvas_width > MAX_FRAME_DIMENSION
+                or canvas_height > MAX_FRAME_DIMENSION
+                or canvas_width * canvas_height > MAX_FRAME_PIXELS
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"PNG dimensions must be between 1 and {MAX_FRAME_DIMENSION}px per side.",
+                )
             img.verify()
     except HTTPException:
         raise
-    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError, SyntaxError) as exc:
         raise HTTPException(status_code=400, detail="Invalid or corrupted PNG image.") from exc
-
-    if canvas_width <= 0 or canvas_height <= 0:
-        raise HTTPException(status_code=400, detail="Invalid PNG dimensions.")
 
     config.ensure_dirs()
     stored_filename = f"{secrets.token_hex(16)}.png"
@@ -314,7 +325,7 @@ def upload_frame(
 
 
 @router.get("/{frame_id}/image", dependencies=[Depends(rate_limit_public)])
-def get_frame_image(frame_id: int, request: Request) -> Response:
+def get_frame_image(frame_id: int, request: Request) -> FileResponse:
     """Serve stored PNG template for a frame."""
     config = get_app_config(request)
     with db_session(config.db_path) as conn:
@@ -327,8 +338,8 @@ def get_frame_image(frame_id: int, request: Request) -> Response:
     if not target.is_relative_to(base) or not target.is_file():
         raise HTTPException(status_code=404, detail="Frame image file not found.")
 
-    return Response(
-        content=target.read_bytes(),
+    return FileResponse(
+        path=target,
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=3600"},
     )

@@ -49,11 +49,16 @@ class FrameSlotSchema(BaseModel):
         return self
 
 
+MAX_SLOTS_PER_FRAME = 32
+
+
 def validate_slots_json(raw: str | list[dict[str, Any]]) -> list[FrameSlotSchema]:
-    """Parse and validate frame slots payload, enforcing unique slot IDs."""
+    """Parse and validate frame slots payload, enforcing unique slot IDs and max count."""
     data = json.loads(raw) if isinstance(raw, str) else raw
     if not isinstance(data, list):
         raise ValueError("slots_json must be a JSON array.")
+    if len(data) > MAX_SLOTS_PER_FRAME:
+        raise ValueError(f"Maximum {MAX_SLOTS_PER_FRAME} slots allowed per frame.")
     slots = [FrameSlotSchema.model_validate(item) for item in data]
     seen: set[str] = set()
     for slot in slots:
@@ -346,7 +351,7 @@ class FrameCategoryResponse(BaseModel):
 class FrameSlotsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    slots: list[FrameSlotSchema]
+    slots: list[FrameSlotSchema] = Field(max_length=MAX_SLOTS_PER_FRAME)
 
     @field_validator("slots")
     @classmethod
