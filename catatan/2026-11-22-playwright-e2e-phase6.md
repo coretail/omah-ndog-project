@@ -19,8 +19,7 @@
    - `phase6-retention-cleanup.spec.ts`: simpan retensi/TTL, cleanup file expired vs fresh + fallback `retention_days` korup, loading state awal tabel, dan UX guard input dirty.
    - `phase6-customer-history-csv.spec.ts`: semantik `Total Tercetak` (`printed`-only), paginasi 520 customer tanpa duplikat, dan export CSV lengkap UTF-8 BOM + sanitasi 7 payload formula + tombol disabled selama unduh.
    - `phase6-customer-delete.spec.ts`: konfirmasi dialog keamanan foto kamera & retensi thumbnail, blokir konflik `409` saat job `printing`, dan hapus sukses + direktori output hilang sambil menjaga foto kamera utuh.
-   - `phase6-security-auth-tunnel.spec.ts`: pemulihan auth `401` (logout server & hapus `sessionStorage`) dan blokir header tunnel `CF-Connecting-IP` (`403` API + UI restricted).
-   - `phase6-advanced-flows.spec.ts`: kolaborasi Kiosk Desktop + Mobile bersamaan pada sesi yang sama, retry/cancel cetak gagal + konsistensi histori `printed`-only, serta pergantian mode `public_base_url` (Tunnel) ↔ fallback LAN.
+   - `phase6-security-modes.spec.ts`: pemulihan auth `401` (logout server), blokir header tunnel `CF-Connecting-IP` (`403` API + UI restricted), kolaborasi Kiosk Desktop + Mobile bersamaan pada sesi yang sama, serta pergantian mode `public_base_url` (Tunnel) ↔ fallback LAN. (Skenario retry/cancel cetak gagal sudah tercakup di `phase5-autoprint-failures.spec.ts` yang ikut dijalankan di suite `npm run test:e2e`.)
 
 4. **Batasan yang Belum Tercakup Otomatis**:
    - Uji manual operasional di PC studio nyata (`start_studio.bat`, akses HP fisik via Wi-Fi LAN tanpa internet, Cloudflare Named Tunnel publik, dan cetak fisik / `Microsoft Print to PDF`).
