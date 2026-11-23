@@ -6,15 +6,26 @@ Dokumen ini merupakan panduan operasional lengkap bagi **Operator Studio** dan *
 
 ## 1. Menyalakan & Mematikan Aplikasi (Operator)
 
-### Menyalakan Aplikasi
+### Menyalakan Aplikasi (Mode Harian / LAN)
 1. Pada PC Kiosk Windows, klik ganda file **`start_studio.bat`** di folder root proyek.
+   - **Saat pertama kali dijalankan di PC baru**: Skrip akan otomatis membuat *virtual environment* (`venv`, memprioritaskan `uv` Python 3.11 lalu `py -3` / `python`), menginstal dependensi backend (`requirements.txt`), dan membangun *frontend* jika belum ada (memerlukan koneksi internet hanya pada kali pertama ini).
+   - **Pemakaian harian berikutnya**: Langsung menyalakan server tanpa mengulang instalasi dan dapat berjalan penuh secara offline.
 2. Tunggu beberapa detik hingga jendela terminal **`Omah Ndog Studio Server`** menyala dan pengecekan `/api/health` selesai.
 3. Browser akan otomatis membuka halaman Kiosk di `http://localhost:8000`.
 4. Untuk membuka panel operator, buka tab baru dan akses **`http://localhost:8000/admin`** (atau klik ikon **Pengaturan Admin** di pojok layar Welcome).
 
+### Menyalakan dengan Akses HP via Internet (Cloudflare Tunnel)
+- **Untuk Testing Cepat (`start_tunnel_quick.bat`)**:
+  1. Jalankan **`start_studio.bat`** terlebih dahulu hingga Kiosk & Admin terbuka.
+  2. Klik ganda **`start_tunnel_quick.bat`** (jika `cloudflared` belum terpasang, skrip akan otomatis menginstalnya lewat `winget`).
+  3. Salin link `https://....trycloudflare.com` yang muncul di terminal, tempel ke **Admin Dashboard → Public Base URL**, lalu klik **Simpan**.
+  4. Biarkan kedua jendela terminal (**Studio Server** dan **Quick Tunnel**) tetap terbuka selama pengujian.
+- **Untuk Produksi dengan Domain Tetap (Cloudflare Named Tunnel)**:
+  - Jika variabel `CLOUDFLARE_TUNNEL_NAME` sudah diisi di bagian atas `start_studio.bat`, operator cukup menjalankan **`start_studio.bat` saja** — server dan tunnel langsung menyala bersamaan dan `Public Base URL` tidak perlu diubah lagi.
+
 ### Mematikan Aplikasi dengan Aman
 1. Buka **Admin Dashboard → Print Queue** dan pastikan tidak ada pesanan yang masih berstatus **`Mencetak...`**.
-2. Tutup jendela terminal **`Omah Ndog Studio Server`** (atau tekan `Ctrl + C` di jendela terminal tersebut).
+2. Tutup jendela terminal **`Omah Ndog Studio Server`** (dan jendela Cloudflare Tunnel jika sedang aktif), atau tekan `Ctrl + C` di masing-masing jendela terminal.
 
 ---
 
@@ -63,13 +74,17 @@ Aplikasi sudah menyediakan 4 kategori bawaan yang dapat disesuaikan kapan saja:
 > **Tips Desain:** Slot editor mendukung bentuk persegi panjang sejajar sumbu. Jika ingin efek sudut melengkung, lingkaran, atau dekorasi di tepi foto, buat efek tersebut langsung pada transparansi file PNG template frame.
 
 ### D. Mengatur Akses HP (`Public Base URL`)
-- **Mode LAN / Offline (Tanpa Internet)**:
-  1. Kosongkan kolom **Public Base URL**, lalu simpan.
-  2. Pastikan port TCP **`8000`** diizinkan pada **Windows Firewall** dan HP customer terhubung ke Wi-Fi lokal studio yang sama.
-- **Mode Internet (Cloudflare Named Tunnel — Direkomendasikan)**:
-  1. Jalankan tunnel di PC studio: `cloudflared tunnel run <nama-tunnel>`
-  2. Masukkan URL domain publik tunnel (misalnya `https://studio.domainanda.com`) ke kolom **Public Base URL**, lalu klik simpan.
-  3. Setiap QR Code sesi baru otomatis mengarah ke domain publik tersebut sehingga customer bisa mengakses lewat paket data seluler.
+- **Mode LAN / Offline (Tanpa Internet — Wajib 1 Wi-Fi)**:
+  1. Kosongkan kolom **Public Base URL**, lalu klik simpan.
+  2. Pastikan port TCP **`8000`** diizinkan di **Windows Firewall** (jalankan sekali di CMD **Run as Administrator**: `netsh advfirewall firewall add rule name="Omah Ndog Studio 8000" dir=in action=allow protocol=TCP localport=8000`).
+  3. Hubungkan HP customer ke Wi-Fi lokal yang sama dengan PC studio.
+- **Mode Testing Cepat (Cloudflare Quick Tunnel)**:
+  1. Jalankan `start_studio.bat` lalu jalankan `start_tunnel_quick.bat`.
+  2. Salin link `https://....trycloudflare.com` ke kolom **Public Base URL**, lalu klik simpan.
+  3. Customer dapat langsung mengakses QR lewat data seluler tanpa perlu konek Wi-Fi studio *(perlu diperbarui lagi jika jendela Quick Tunnel ditutup dan dinyalakan ulang)*.
+- **Mode Produksi (Cloudflare Named Tunnel — Domain Tetap)**:
+  1. Gunakan domain sendiri yang terhubung ke Cloudflare Named Tunnel (`cloudflared tunnel run <nama-tunnel>` atau isi `CLOUDFLARE_TUNNEL_NAME` di `start_studio.bat`).
+  2. Masukkan URL domain publik tetap (misalnya `https://studio.domainanda.com`) ke kolom **Public Base URL** satu kali saja, lalu klik simpan.
 
 ### E. Mengatur Printer & Mode Cetak (`Print Queue`)
 1. Pada panel **Print Queue**, pilih **Printer Target** yang terhubung ke Windows.
@@ -159,7 +174,8 @@ Buka bagian **Privasi, Retensi & Histori Customer** di Admin Dashboard:
 
 | Masalah | Kemungkinan Penyebab | Solusi |
 | --- | --- | --- |
-| HP tidak bisa membuka halaman saat scan QR (mode LAN) | Port `8000` terblokir Windows Firewall atau HP tidak di Wi-Fi yang sama | Pastikan HP terhubung ke Wi-Fi studio yang sama dan izinkan koneksi masuk TCP port `8000` di Windows Firewall |
+| `start_studio.bat` menampilkan error `uv maupun Python 3 tidak ditemukan` | PC baru belum memiliki `uv` maupun Python 3 | Jalankan `winget install astral-sh.uv` (tutup & buka ulang terminal), lalu jalankan ulang `start_studio.bat` |
+| HP *loading* lama / gagal membuka link QR (IP lokal seperti `10.x.x.x:8000` atau `192.168.x.x:8000`) | HP memakai data seluler/beda Wi-Fi, port `8000` diblokir Windows Firewall, atau router mengaktifkan *AP/Client Isolation* | Hubungkan HP ke Wi-Fi yang sama & buka port `8000` di Windows Firewall; atau gunakan **`start_tunnel_quick.bat`** / Cloudflare Named Tunnel agar HP bisa akses lewat data seluler |
 | Halaman `/admin` tidak bisa dibuka dari HP lewat tunnel | Proteksi keamanan memblokir akses Admin dari jaringan publik/tunnel | Buka Admin Dashboard langsung dari PC Kiosk (`http://localhost:8000/admin`) atau perangkat di LAN lokal |
 | Foto baru dari kamera tidak muncul di galeri customer | Foto baru selesai disalin atau filter waktu registrasi aktif | Klik tombol **Muat Ulang Daftar Foto** di layar Pilih Foto; pastikan foto berada di subfolder sesi yang aktif |
 | Scan QR menampilkan pesan sesi tidak tersedia | Sesi sudah ditutup (`completed`) dari Kiosk atau melewati batas waktu sesi (default 4 jam) | Buat sesi baru dari halaman Welcome di PC Kiosk |

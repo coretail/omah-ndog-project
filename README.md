@@ -21,10 +21,10 @@ Aplikasi pemilihan frame dan pencetakan foto untuk operasional *self-photo studi
 
 | Komponen | Teknologi |
 | --- | --- |
-| Backend | Python, FastAPI, Uvicorn, Pydantic, SQLite (WAL mode), Pillow, `qrcode` |
+| Backend | Python 3.11+, FastAPI, Uvicorn, Pydantic, SQLite (WAL mode), Pillow, `qrcode` |
 | Printing Windows | `pywin32` (`win32print` / `win32ui`, diisolasi di `backend/services/printer.py`) |
 | Frontend | React 19, Vite 6, TypeScript (strict), Lucide React, Fontsource (`Poller One`, `Inter`) |
-| Akses HP | LAN Lokal (fallback offline) & Cloudflare Named Tunnel |
+| Akses HP | LAN Lokal (fallback offline) & Cloudflare Tunnel (Quick Tunnel / Named Tunnel) |
 | Kualitas & Uji | `ruff`, `pytest`, `httpx`, `tsc`, Playwright E2E |
 
 ## Struktur Direktori
@@ -37,36 +37,23 @@ Aplikasi pemilihan frame dan pencetakan foto untuk operasional *self-photo studi
 | `catatan/` | Catatan arsitektur, keamanan, dependensi, dan keputusan teknis per fase |
 | `plan/` | Rencana implementasi per fase dan pengujian E2E |
 | `scripts/check.bat` | Skrip pengecekan kualitas otomatis sebelum commit/push |
-| `start_studio.bat` | Launcher 1-klik untuk operator studio di Windows |
+| `start_studio.bat` | Launcher 1-klik operator di Windows (auto-setup `venv`, auto-build frontend, opsional Named Tunnel) |
+| `start_tunnel_quick.bat` | Launcher Cloudflare Quick Tunnel untuk pengujian cepat akses HP dari jaringan seluler |
+| `panduan_pemakaian.md` | Panduan operasional lengkap untuk operator studio dan customer |
 
 ## Prasyarat
 
 - **Sistem Operasi**: Windows (disarankan untuk integrasi printer via `pywin32` dan launcher `.bat`).
-- **Python**: Python 3.11 atau lebih baru.
+- **Python 3.11+ atau `uv`**:
+  - **Direkomendasikan (tanpa Python global)**: Pasang `uv` dengan `winget install astral-sh.uv` — `start_studio.bat` akan otomatis mengunduh Python 3.11 terisolasi ke dalam `venv/`.
+  - **Alternatif**: Instal Python 3.11 atau 3.12 (centang *Add python.exe to PATH* atau gunakan Python Launcher `py`).
 - **Node.js**: Node.js 18+ beserta `npm` (untuk membangun *frontend* jika `frontend/dist/` belum tersedia).
-- **Cloudflared** *(opsional)*: Jika ingin mengakses halaman customer dari HP melalui jaringan seluler (Cloudflare Named Tunnel).
+- **Cloudflared** *(opsional)*: Untuk mengakses halaman customer dari HP lewat jaringan seluler (otomatis ditawarkan/dipasang oleh `start_tunnel_quick.bat` via `winget` jika belum ada).
 
-## Instalasi
+## Instalasi & Menjalankan Aplikasi
 
-1. **Siapkan virtual environment Python dan instal dependensi backend**:
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-2. **Instal dependensi dan build frontend**:
-   ```bash
-   cd frontend
-   npm ci
-   npm run build
-   cd ..
-   ```
-
-## Menjalankan Aplikasi
-
-### 1. Mode Operasional Studio (1-Klik Windows)
-Klik ganda `start_studio.bat` atau jalankan lewat terminal:
+### 1. Mode 1-Klik Operator Studio (Windows — Direkomendasikan)
+Anda tidak perlu membuat `venv` atau build frontend secara manual. Cukup klik ganda **`start_studio.bat`** (atau jalankan lewat terminal):
 ```bat
 start_studio.bat
 ```
@@ -74,24 +61,37 @@ Untuk memakai port selain `8000`:
 ```bat
 start_studio.bat 8080
 ```
-Skrip ini akan otomatis:
-- Memeriksa dan mem-build `frontend/dist/` apabila belum tersedia.
-- Menyalakan server FastAPI pada `0.0.0.0:8000` (menyajikan API dan SPA dalam satu origin).
-- Menunggu kesiapan `/api/health`, lalu membuka halaman Kiosk di browser.
+Pada pemakaian pertama, skrip ini otomatis:
+1. Membuat `venv/` (urutan prioritas: `uv` Python 3.11 → `py -3` → `python`) dan menginstal `requirements.txt`.
+2. Memeriksa dan membangun `frontend/dist/` bila belum tersedia.
+3. Menyalakan server FastAPI pada `0.0.0.0:8000` di jendela **`Omah Ndog Studio Server`** (tetap terbuka jika terjadi error agar mudah dicek).
+4. Menyalakan **Cloudflare Named Tunnel** secara otomatis apabila variabel `CLOUDFLARE_TUNNEL_NAME` diisi.
+5. Menunggu `/api/health` siap, lalu membuka halaman Kiosk di browser.
 
 Alamat lokal default:
 - **PC Kiosk**: `http://localhost:8000`
 - **Admin Dashboard**: `http://localhost:8000/admin`
 
-### 2. Mode Pengembangan (Development)
-Jalankan backend FastAPI (gunakan `STUDIO_MOCK_PRINTER=1` jika tidak terhubung ke printer fisik):
+### 2. Instalasi Manual & Mode Pengembangan (Development)
+Jika ingin setup manual dengan `uv` (tanpa Python global):
+```bat
+uv venv venv --python 3.11
+uv pip install --python venv\Scripts\python.exe -r requirements.txt
+```
+Atau dengan Python standar:
+```bat
+py -3 -m venv venv
+venv\Scripts\pip.exe install -r requirements.txt
+```
+Lalu jalankan backend FastAPI (gunakan `STUDIO_MOCK_PRINTER=1` jika tidak terhubung ke printer fisik):
 ```bat
 set STUDIO_MOCK_PRINTER=1
 venv\Scripts\python.exe -m uvicorn backend.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
-Jika ingin mengembangkan UI dengan *hot reload* Vite, jalankan di terminal terpisah:
+Untuk mengembangkan UI dengan *hot reload* Vite di terminal terpisah:
 ```bash
 cd frontend
+npm ci
 npm run dev
 ```
 
@@ -103,17 +103,26 @@ npm run dev
 | `STUDIO_DATA_DIR` | `./data` | Lokasi penyimpanan `studio.db`, template frame, thumbnail, dan output cetak |
 | `ADMIN_INITIAL_PIN` | *(kosong)* | Opsional untuk mengatur PIN Admin awal saat database pertama kali dibuat |
 | `STUDIO_MOCK_PRINTER` | *(kosong)* | Set ke `1` untuk memakai `MockPrinterBackend` saat pengembangan/pengujian tanpa printer fisik |
+| `CLOUDFLARE_TUNNEL_NAME` | *(kosong)* | Opsional di `start_studio.bat` untuk otomatis menyalakan Cloudflare Named Tunnel produksi |
 
 ## Akses HP via QR (LAN & Cloudflare Tunnel)
 
-- **Mode LAN / Offline**: Kosongkan kolom `Public Base URL` di Admin Dashboard. Pastikan port TCP `8000` diizinkan di **Windows Firewall** dan HP customer terhubung ke Wi-Fi studio yang sama.
-- **Mode Internet (Cloudflare Named Tunnel — Direkomendasikan)**:
-  1. Jalankan tunnel dengan domain tetap:
-     ```bash
-     cloudflared tunnel run <nama-tunnel>
+- **Mode LAN / Offline (1 Wi-Fi yang sama)**:
+  1. Kosongkan kolom **Public Base URL** di Admin Dashboard.
+  2. Izinkan port TCP `8000` di Windows Firewall (CMD **Run as Administrator**):
+     ```bat
+     netsh advfirewall firewall add rule name="Omah Ndog Studio 8000" dir=in action=allow protocol=TCP localport=8000
      ```
-  2. Masukkan URL publik domain tersebut ke kolom `Public Base URL` pada Admin Dashboard agar QR Code otomatis memakai domain publik.
-  *(Catatan: `cloudflared tunnel --url http://localhost:8000` dapat dipakai untuk pengujian cepat, namun URL akan berubah setiap kali tunnel di-restart).*
+  3. Pastikan HP customer terhubung ke Wi-Fi studio yang sama dengan PC.
+- **Mode Testing Cepat dari Data Seluler (`start_tunnel_quick.bat`)**:
+  1. Jalankan **`start_studio.bat`** terlebih dahulu hingga server siap.
+  2. Jalankan **`start_tunnel_quick.bat`** (otomatis memasang `cloudflared` via `winget` jika belum ada).
+  3. Salin link `https://....trycloudflare.com` yang muncul ke kolom **Public Base URL** di Admin Dashboard lalu klik **Simpan**.
+  *(URL Quick Tunnel berubah setiap kali tunnel di-restart).*
+- **Mode Produksi (Cloudflare Named Tunnel — Domain Tetap)**:
+  1. Siapkan 1 domain dan Cloudflare Named Tunnel sekali di awal.
+  2. Isi variabel `CLOUDFLARE_TUNNEL_NAME` di bagian atas `start_studio.bat` (atau jalankan sebagai *Windows Service*).
+  3. Isi domain tetap (misalnya `https://studio.domainanda.com`) ke **Public Base URL** di Admin Dashboard sekali saja — setelah itu cukup jalankan `start_studio.bat`.
 
 ## Pengujian & Pengecekan Kualitas
 
@@ -136,4 +145,4 @@ Perintah manual per komponen:
 
 ## Panduan Pemakaian
 
-Lihat [Panduan Pemakaian](panduan_pemakaian.md) untuk petunjuk operasional lengkap penggunaan aplikasi, admin, dan pencetakan.
+Lihat [Panduan Pemakaian](https://www.google.com/search?q=panduan_pemakaian.md) untuk petunjuk operasional lengkap penggunaan aplikasi, admin, tunnel, dan pencetakan.
