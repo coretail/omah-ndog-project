@@ -145,4 +145,4 @@ Perintah manual per komponen:
 
 ## Panduan Pemakaian
 
-Lihat [Panduan Pemakaian](https://www.google.com/search?q=panduan_pemakaian.md) untuk petunjuk operasional lengkap penggunaan aplikasi, admin, tunnel, dan pencetakan.
+Lihat [Panduan Pemakaian](https://github.com/coretail/omah-ndog-project/blob/main/panduan_pemakaian.md) untuk petunjuk operasional lengkap penggunaan aplikasi, admin, tunnel, dan pencetakan.
